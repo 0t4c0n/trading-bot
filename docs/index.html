@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot - Top Acciones</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 10px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 1.5em;
+            margin-bottom: 5px;
+        }
+        
+        .header .subtitle {
+            opacity: 0.9;
+            font-size: 0.9em;
+        }
+        
+        .summary {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            text-align: center;
+        }
+        
+        .summary-item {
+            background: white;
+            padding: 12px 8px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .summary-number {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .summary-label {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .top-picks {
+            padding: 20px;
+        }
+        
+        .section-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #333;
+            display: flex;
+            align-items: center;
+        }
+        
+        .section-title::before {
+            content: "🔥";
+            margin-right: 8px;
+        }
+        
+        .stock-card {
+            background: white;
+            border-radius: 15px;
+            padding: 15px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-left: 4px solid #4CAF50;
+            transition: transform 0.2s;
+        }
+        
+        .stock-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+        }
+        
+        .stock-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+        
+        .stock-info h3 {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 2px;
+        }
+        
+        .stock-info .company {
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 2px;
+        }
+        
+        .stock-info .sector {
+            font-size: 0.75em;
+            color: #999;
+        }
+        
+        .stock-price {
+            text-align: right;
+        }
+        
+        .price {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .score {
+            font-size: 0.8em;
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .metric {
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        
+        .metric-label {
+            font-size: 0.7em;
+            color: #666;
+            margin-top: 2px;
+        }
+        
+        .positive {
+            color: #4CAF50;
+        }
+        
+        .negative {
+            color: #f44336;
+        }
+        
+        .neutral {
+            color: #ff9800;
+        }
+        
+        .rank {
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            background: #4CAF50;
+            color: white;
+            width: 25px;
+            height: 25px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.8em;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px;
+            text-align: center;
+        }
+        
+        .last-update {
+            text-align: center;
+            padding: 15px;
+            font-size: 0.8em;
+            color: #666;
+            background: #f8f9fa;
+        }
+        
+        .ma-levels {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 5px;
+            margin-top: 8px;
+        }
+        
+        .ma-level {
+            background: #e3f2fd;
+            padding: 4px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.7em;
+        }
+        
+        .refresh-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            font-size: 1.2em;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .refresh-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                margin: 5px;
+                border-radius: 15px;
+            }
+            
+            .summary-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+            }
+            
+            .metrics {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📈 Trading Bot</h1>
+            <div class="subtitle">Top Acciones Filtradas</div>
+        </div>
+        
+        <div id="content">
+            <div class="loading">
+                <div>🔄 Cargando datos...</div>
+            </div>
+        </div>
+    </div>
+    
+    <button class="refresh-btn" onclick="loadData()" title="Actualizar datos">
+        🔄
+    </button>
+
+    <script>
+        let lastUpdateTime = null;
+        
+        async function loadData() {
+            try {
+                const response = await fetch('data.json');
+                if (!response.ok) throw new Error('No se pudieron cargar los datos');
+                
+                const data = await response.json();
+                renderDashboard(data);
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('content').innerHTML = `
+                    <div class="error">
+                        ❌ Error cargando datos<br>
+                        <small>${error.message}</small>
+                    </div>
+                `;
+            }
+        }
+        
+        function renderDashboard(data) {
+            const contentEl = document.getElementById('content');
+            
+            // Resumen
+            const summaryHtml = `
+                <div class="summary">
+                    <div class="summary-grid">
+                        <div class="summary-item">
+                            <div class="summary-number">${data.summary.total_analyzed}</div>
+                            <div class="summary-label">Analizadas</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-number">${data.summary.passed_filters}</div>
+                            <div class="summary-label">Filtradas</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-number">${data.summary.filter_rate}%</div>
+                            <div class="summary-label">Tasa Éxito</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Top picks
+            let topPicksHtml = `
+                <div class="top-picks">
+                    <div class="section-title">Top 10 Recomendaciones</div>
+            `;
+            
+            if (data.top_picks && data.top_picks.length > 0) {
+                data.top_picks.forEach(stock => {
+                    const dayChangeClass = stock.metrics.last_day_change >= 0 ? 'positive' : 'negative';
+                    const volumeBoostClass = stock.metrics.volume_boost >= 25 ? 'positive' : 'neutral';
+                    const ma50Class = stock.metrics.ma50_distance >= 0 && stock.metrics.ma50_distance <= 5 ? 'positive' : 'neutral';
+                    
+                    topPicksHtml += `
+                        <div class="stock-card" style="position: relative;">
+                            <div class="rank">${stock.rank}</div>
+                            <div class="stock-header">
+                                <div class="stock-info">
+                                    <h3>${stock.symbol}</h3>
+                                    <div class="company">${stock.company}</div>
+                                    <div class="sector">${stock.sector}</div>
+                                </div>
+                                <div class="stock-price">
+                                    <div class="price">$${stock.price}</div>
+                                    <div class="score">Score: ${stock.score}</div>
+                                </div>
+                            </div>
+                            
+                            <div class="metrics">
+                                <div class="metric">
+                                    <div class="metric-value ${dayChangeClass}">
+                                        ${stock.metrics.last_day_change >= 0 ? '+' : ''}${stock.metrics.last_day_change}%
+                                    </div>
+                                    <div class="metric-label">Último día</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value ${ma50Class}">
+                                        +${stock.metrics.ma50_distance}%
+                                    </div>
+                                    <div class="metric-label">vs MA50</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value ${volumeBoostClass}">
+                                        +${stock.metrics.volume_boost}%
+                                    </div>
+                                    <div class="metric-label">Vol boost</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-value">${stock.metrics.volume_50d_millions}M</div>
+                                    <div class="metric-label">Vol 50d</div>
+                                </div>
+                            </div>
+                            
+                            <div class="ma-levels">
+                                <div class="ma-level">MA10: $${stock.ma_levels.ma_10}</div>
+                                <div class="ma-level">MA21: $${stock.ma_levels.ma_21}</div>
+                                <div class="ma-level">MA50: $${stock.ma_levels.ma_50}</div>
+                                <div class="ma-level">MA200: $${stock.ma_levels.ma_200}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                topPicksHtml += `
+                    <div class="error">
+                        📊 No hay acciones que pasen todos los filtros hoy
+                    </div>
+                `;
+            }
+            
+            topPicksHtml += '</div>';
+            
+            // Footer con última actualización
+            const updateTime = new Date(data.timestamp).toLocaleString('es-ES');
+            const footerHtml = `
+                <div class="last-update">
+                    📅 Última actualización: ${updateTime}<br>
+                    🗓️ Fecha de mercado: ${data.market_date}
+                </div>
+            `;
+            
+            contentEl.innerHTML = summaryHtml + topPicksHtml + footerHtml;
+        }
+        
+        // Cargar datos al iniciar
+        loadData();
+        
+        // Auto-refresh cada 5 minutos si está activo
+        setInterval(() => {
+            if (document.hasFocus()) {
+                loadData();
+            }
+        }, 5 * 60 * 1000);
+    </script>
+</body>
+</html>

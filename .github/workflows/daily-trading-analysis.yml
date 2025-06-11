@@ -1,0 +1,58 @@
+# .github/workflows/daily-trading-analysis.yml
+name: Análisis Diario de Trading Completo
+
+on:
+  schedule:
+    # Ejecutar Lunes a Viernes 5 horas después del cierre del mercado US
+    # Mercado US: 9:30 AM - 4:00 PM EST = 14:30 - 20:00 UTC (horario estándar)
+    # Mercado US: 9:30 AM - 4:00 PM EDT = 13:30 - 19:00 UTC (horario de verano)
+    - cron: '0 1 * * 2-6'   # 01:00 UTC = 5h después del cierre en horario estándar (Martes-Sábado UTC)
+    - cron: '0 0 * * 2-6'   # 00:00 UTC = 5h después del cierre en horario de verano (Martes-Sábado UTC)
+  workflow_dispatch:  # Permitir ejecución manual
+
+jobs:
+  trading-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 horas máximo para procesar todas las acciones
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      
+    - name: Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Instalar dependencias
+      run: |
+        pip install --upgrade pip
+        pip install yfinance pandas requests
+        
+    - name: Ejecutar análisis completo de trading
+      run: |
+        echo "Iniciando análisis completo de todas las acciones NYSE + NASDAQ..."
+        python script_automated.py
+      env:
+        PYTHONUNBUFFERED: 1  # Para ver output en tiempo real
+        
+    - name: Crear JSON para dashboard
+      run: |
+        echo "Generando dashboard con datos completos..."
+        python create_dashboard_data.py
+        
+    - name: Verificar archivos generados
+      run: |
+        echo "=== ARCHIVOS GENERADOS ==="
+        ls -la docs/
+        echo "=== CONTENIDO DATA.JSON (primeras líneas) ==="
+        head -20 docs/data.json
+        echo "=== ESTADÍSTICAS ==="
+        echo "Tamaño data.json: $(stat -c%s docs/data.json) bytes"
+        
+    - name: Desplegar a GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs
+        publish_branch: gh-pages
