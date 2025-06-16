@@ -69,7 +69,14 @@
         .summary-number {
             font-size: 1.8em;
             font-weight: bold;
+        }
+        
+        .summary-number.success {
             color: #4CAF50;
+        }
+        
+        .summary-number.warning {
+            color: #ff9800;
         }
         
         .summary-label {
@@ -263,6 +270,99 @@
             transform: scale(1.1);
         }
         
+        /* Estilos para cuando no hay resultados */
+        .no-results {
+            text-align: center;
+            padding: 30px 20px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 15px;
+            margin: 10px 0;
+        }
+        
+        .no-results-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            opacity: 0.7;
+        }
+        
+        .no-results-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 8px;
+        }
+        
+        .no-results-subtitle {
+            font-size: 1em;
+            color: #6c757d;
+            margin-bottom: 25px;
+        }
+        
+        .no-results-details {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .filter-summary {
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        
+        .filter-summary-title {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .filter-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 6px;
+        }
+        
+        .filter-item {
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            border-left: 3px solid #4CAF50;
+        }
+        
+        .suggestions {
+            text-align: left;
+            border-top: 1px solid #e9ecef;
+            padding-top: 15px;
+        }
+        
+        .suggestions-title {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .suggestion-item {
+            background: #fff3cd;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            margin-bottom: 6px;
+            border-left: 3px solid #ffc107;
+        }
+        
+        .retry-info {
+            margin-top: 20px;
+            padding: 12px;
+            background: #e7f3ff;
+            border-radius: 8px;
+            color: #004085;
+            font-size: 0.9em;
+        }
+        
         @media (max-width: 480px) {
             .container {
                 margin: 5px;
@@ -302,8 +402,39 @@
     <script>
         let lastUpdateTime = null;
         
+        function getNextUpdateTime() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            // Determinar si estamos en horario de verano o estándar
+            const isEST = now.getMonth() < 2 || now.getMonth() > 10; // Nov-Mar = EST
+            const nextUpdateHour = isEST ? 1 : 0; // 01:00 UTC (EST) o 00:00 UTC (EDT)
+            
+            const nextUpdate = new Date(tomorrow);
+            nextUpdate.setUTCHours(nextUpdateHour, 0, 0, 0);
+            
+            // Si es fin de semana, ajustar al próximo lunes
+            const dayOfWeek = nextUpdate.getUTCDay();
+            if (dayOfWeek === 0) { // Domingo
+                nextUpdate.setDate(nextUpdate.getDate() + 1); // Lunes
+            } else if (dayOfWeek === 6) { // Sábado
+                nextUpdate.setDate(nextUpdate.getDate() + 2); // Lunes
+            }
+            
+            return nextUpdate.toLocaleString('es-ES', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+        
         async function loadData() {
             try {
+                // Intentar cargar desde data.json
                 const response = await fetch('data.json');
                 if (!response.ok) throw new Error('No se pudieron cargar los datos');
                 
@@ -312,12 +443,55 @@
                 
             } catch (error) {
                 console.error('Error loading data:', error);
-                document.getElementById('content').innerHTML = `
-                    <div class="error">
-                        ❌ Error cargando datos<br>
-                        <small>${error.message}</small>
+                
+                // Fallback: mostrar datos de ejemplo para testing local
+                const fallbackData = {
+                    "timestamp": new Date().toISOString(),
+                    "market_date": new Date().toISOString().split('T')[0],
+                    "summary": {
+                        "total_analyzed": 183,
+                        "passed_filters": 0,
+                        "filter_rate": 0.0,
+                        "message": "Testing local - Sin datos reales"
+                    },
+                    "top_picks": [],
+                    "filter_criteria": {
+                        "volume_50d_min": "300,000",
+                        "price_vs_ma50": "0% a +5%",
+                        "ma200_trend": "Positiva",
+                        "last_day": "Positivo",
+                        "earnings": "Positivos último trimestre",
+                        "volume_boost": "+25% vs promedio 50d",
+                        "revenue_growth": "🚀 Crecimiento ingresos anuales > +15%"
+                    },
+                    "statistics": {
+                        "message": "Datos de ejemplo para testing local",
+                        "suggestions": [
+                            "Para datos reales, sirve desde servidor HTTP",
+                            "Ejecuta: python -m http.server 8000",
+                            "Luego abre: http://localhost:8000"
+                        ]
+                    }
+                };
+                
+                console.log('Usando datos de fallback para testing local');
+                renderDashboard(fallbackData);
+                
+                // Mostrar información adicional sobre el error
+                const errorInfo = document.createElement('div');
+                errorInfo.innerHTML = `
+                    <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px; color: #856404;">
+                        <strong>⚠️ Modo Testing Local</strong><br>
+                        <small>
+                            No se pueden cargar datos reales desde archivo local.<br>
+                            Para datos reales:<br>
+                            1. <code>cd docs</code><br>
+                            2. <code>python -m http.server 8000</code><br>
+                            3. Abre <code>http://localhost:8000</code>
+                        </small>
                     </div>
                 `;
+                document.getElementById('content').appendChild(errorInfo);
             }
         }
         
@@ -329,16 +503,16 @@
                 <div class="summary">
                     <div class="summary-grid">
                         <div class="summary-item">
-                            <div class="summary-number">${data.summary.total_analyzed}</div>
+                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.total_analyzed}</div>
                             <div class="summary-label">Analizadas</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-number">${data.summary.passed_filters}</div>
-                            <div class="summary-label">Filtradas</div>
+                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.passed_filters}</div>
+                            <div class="summary-label">${data.summary.passed_filters > 0 ? 'Filtradas' : 'Sin filtrar'}</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-number">${data.summary.filter_rate}%</div>
-                            <div class="summary-label">Tasa Éxito</div>
+                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.filter_rate}%</div>
+                            <div class="summary-label">${data.summary.passed_filters > 0 ? 'Tasa Éxito' : 'Selectividad'}</div>
                         </div>
                     </div>
                 </div>
@@ -347,7 +521,7 @@
             // Top picks
             let topPicksHtml = `
                 <div class="top-picks">
-                    <div class="section-title">Top 10 Recomendaciones</div>
+                    <div class="section-title">${data.summary.passed_filters > 0 ? 'Top 10 Recomendaciones' : 'Análisis del ' + data.market_date}</div>
             `;
             
             if (data.top_picks && data.top_picks.length > 0) {
@@ -366,7 +540,7 @@
                                     <div class="sector">${stock.sector}</div>
                                 </div>
                                 <div class="stock-price">
-                                    <div class="price">$${stock.price}</div>
+                                    <div class="price">${stock.price}</div>
                                     <div class="score">Score: ${stock.score}</div>
                                 </div>
                             </div>
@@ -397,18 +571,43 @@
                             </div>
                             
                             <div class="ma-levels">
-                                <div class="ma-level">MA10: $${stock.ma_levels.ma_10}</div>
-                                <div class="ma-level">MA21: $${stock.ma_levels.ma_21}</div>
-                                <div class="ma-level">MA50: $${stock.ma_levels.ma_50}</div>
-                                <div class="ma-level">MA200: $${stock.ma_levels.ma_200}</div>
+                                <div class="ma-level">MA10: ${stock.ma_levels.ma_10}</div>
+                                <div class="ma-level">MA21: ${stock.ma_levels.ma_21}</div>
+                                <div class="ma-level">MA50: ${stock.ma_levels.ma_50}</div>
+                                <div class="ma-level">MA200: ${stock.ma_levels.ma_200}</div>
                             </div>
                         </div>
                     `;
                 });
             } else {
                 topPicksHtml += `
-                    <div class="error">
-                        📊 No hay acciones que pasen todos los filtros hoy
+                    <div class="no-results">
+                        <div class="no-results-icon">🔍</div>
+                        <div class="no-results-title">Sin resultados para ${data.market_date}</div>
+                        <div class="no-results-subtitle">Ninguna acción pasó los 7 filtros técnicos hoy</div>
+                        <div class="no-results-details">
+                            <div class="filter-summary">
+                                <div class="filter-summary-title">📋 Filtros aplicados:</div>
+                                <div class="filter-list">
+                                    <div class="filter-item">✅ Volumen 50d ≥ 300K</div>
+                                    <div class="filter-item">✅ Precio: 0% a +5% vs MA50</div>
+                                    <div class="filter-item">✅ Tendencia MA200 positiva</div>
+                                    <div class="filter-item">✅ Último día positivo</div>
+                                    <div class="filter-item">✅ Beneficios trimestrales +</div>
+                                    <div class="filter-item">✅ Volumen +25% vs promedio</div>
+                                    <div class="filter-item">🚀 Crecimiento ingresos +15%</div>
+                                </div>
+                            </div>
+                            <div class="suggestions">
+                                <div class="suggestions-title">💡 Recomendaciones:</div>
+                                <div class="suggestion-item">• Revisa el análisis mañana</div>
+                                <div class="suggestion-item">• Los filtros son muy selectivos</div>
+                                <div class="suggestion-item">• Busca oportunidades en días volátiles</div>
+                            </div>
+                        </div>
+                        <div class="retry-info">
+                            <small>Próxima actualización: ${getNextUpdateTime()}</small>
+                        </div>
                     </div>
                 `;
             }
