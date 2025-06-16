@@ -10,10 +10,26 @@ on:
     - cron: '0 0 * * 2-6'   # 00:00 UTC = 5h después del cierre en horario de verano (Martes-Sábado UTC)
   workflow_dispatch:  # Permitir ejecución manual
 
+# PERMISOS NECESARIOS PARA GITHUB PAGES
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Asegurar que solo un workflow corra a la vez
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   trading-analysis:
     runs-on: ubuntu-latest
     timeout-minutes: 120  # 2 horas máximo para procesar todas las acciones
+    
+    # Configurar entorno para GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
     - name: Checkout código
@@ -49,10 +65,15 @@ jobs:
         head -20 docs/data.json
         echo "=== ESTADÍSTICAS ==="
         echo "Tamaño data.json: $(stat -c%s docs/data.json) bytes"
+    
+    - name: Configurar Pages
+      uses: actions/configure-pages@v4
+      
+    - name: Subir artefacto de Pages
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: './docs'
         
     - name: Desplegar a GitHub Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs
-        publish_branch: gh-pages
+      id: deployment
+      uses: actions/deploy-pages@v4
