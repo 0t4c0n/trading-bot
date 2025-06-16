@@ -488,7 +488,7 @@ def main():
         sys.exit(1)
     
     # CAMBIO PRINCIPAL: Procesar TODAS las acciones, no solo una muestra
-    symbols_to_process = all_symbols[0:200]  #TODO cambiar 
+    symbols_to_process = all_symbols
     print(f"🚀 Procesando {len(symbols_to_process)} acciones COMPLETAS (NYSE + NASDAQ)...")
     print("⚠️  Esto tomará entre 45-90 minutos para completar")
     
@@ -522,8 +522,8 @@ def main():
         
         # Pausa entre lotes para evitar rate limiting
         if batch_num < total_batches - 1:  # No pausar después del último lote
-            print("⏳ Pausa de 15 segundos entre lotes...")
-            time.sleep(15)
+            print("⏳ Pausa de 30 segundos entre lotes...")
+            time.sleep(30)
     
     print(f"\n=== PROCESAMIENTO COMPLETO FINALIZADO ===")
     print(f"📊 Total acciones procesadas exitosamente: {len(all_stock_data)}")
