@@ -506,7 +506,7 @@ def main():
         sys.exit(1)
     
     # CAMBIO PRINCIPAL: Procesar TODAS las acciones, no solo una muestra
-    symbols_to_process = all_symbols[0:150]  # SIN LÍMITE - ANÁLISIS COMPLETO
+    symbols_to_process = all_symbols  # SIN LÍMITE - ANÁLISIS COMPLETO
     print(f"🚀 Procesando {len(symbols_to_process)} acciones COMPLETAS (NYSE + NASDAQ)...")
     print("⚠️  Esto tomará entre 45-90 minutos para completar")
     
