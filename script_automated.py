@@ -352,6 +352,20 @@ class USStockMovingAveragesExtractor:
         stock_data = {}
         failed_symbols = []
         
+        # Descargar SPY para comparaciones de Relative Strength
+        print("Descargando datos de SPY para comparaciones...")
+        try:
+            spy_ticker = yf.Ticker("SPY")
+            spy_data = spy_ticker.history(period=period)
+            if spy_data.empty:
+                print("⚠️ No se pudieron obtener datos de SPY")
+                spy_data = None
+            else:
+                print(f"✓ SPY data: {len(spy_data)} días obtenidos")
+        except Exception as e:
+            print(f"⚠️ Error descargando SPY: {e}")
+            spy_data = None
+        
         print(f"Descargando datos para {len(symbols)} acciones...")
         
         for i, symbol in enumerate(symbols):
@@ -377,8 +391,8 @@ class USStockMovingAveragesExtractor:
                         ticker_info = {}
                         company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
                     
-                    # Obtener estado actual de las MAs
-                    ma_status = self.get_current_ma_status(hist_with_ma, ticker_info)
+                    # Obtener estado actual de las MAs (con SPY data para relative strength)
+                    ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_data)
                     
                     stock_data[symbol] = {
                         'data': hist_with_ma,
@@ -435,6 +449,10 @@ class USStockMovingAveragesExtractor:
                     'Last_Day_Positive': ma_status.get('last_day_positive'),
                     'Quarterly_Earnings_Positive': ma_status.get('quarterly_earnings_positive'),
                     'Revenue_Growth_Positive': ma_status.get('revenue_growth_positive'),
+                    'Earnings_Growth_Positive': ma_status.get('earnings_growth_positive'),
+                    'Growth_Criteria_Met': ma_status.get('growth_criteria_met'),
+                    'Relative_Strength_vs_SPY': ma_status.get('relative_strength_vs_spy'),
+                    'Relative_Strength_Value': ma_status.get('relative_strength_value'),
                     'Above_MA_10': ma_status.get('above_ma_10'),
                     'Above_MA_21': ma_status.get('above_ma_21'),
                     'Above_MA_50': ma_status.get('above_ma_50'),
@@ -488,7 +506,7 @@ def main():
         sys.exit(1)
     
     # CAMBIO PRINCIPAL: Procesar TODAS las acciones, no solo una muestra
-    symbols_to_process = all_symbols
+    symbols_to_process = all_symbols  # SIN LÍMITE - ANÁLISIS COMPLETO
     print(f"🚀 Procesando {len(symbols_to_process)} acciones COMPLETAS (NYSE + NASDAQ)...")
     print("⚠️  Esto tomará entre 45-90 minutos para completar")
     

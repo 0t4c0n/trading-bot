@@ -5,6 +5,20 @@ import glob
 import os
 from datetime import datetime
 
+def get_growth_type(row):
+    """Determina qué tipo de crecimiento cumple la acción"""
+    revenue_growth = row.get('Revenue_Growth_Positive', False)
+    earnings_growth = row.get('Earnings_Growth_Positive', False)
+    
+    if revenue_growth and earnings_growth:
+        return "Ingresos + Beneficios"
+    elif revenue_growth:
+        return "Ingresos"
+    elif earnings_growth:
+        return "Beneficios"
+    else:
+        return "N/A"
+
 def create_dashboard_data():
     """Convierte los resultados del script en datos JSON para el dashboard"""
     
@@ -157,10 +171,12 @@ def create_dashboard_data():
                 "message": "Sin acciones que pasen todos los filtros",
                 "total_analyzed": len(all_df) if not all_df.empty else 0,
                 "suggestions": [
-                    "Los 7 filtros son muy selectivos para garantizar calidad",
+                    "Los 8 filtros son muy selectivos para garantizar calidad",
+                    "Incluye Relative Strength vs SPY para outperformance",
+                    "Crecimiento flexible: Ingresos >15% O Beneficios >25%",
                     "Mercados volátiles pueden tener días sin oportunidades claras",
                     "Revisa el análisis mañana para nuevas oportunidades",
-                    "Los filtros priorizan empresas de crecimiento sostenible"
+                    "Los filtros priorizan empresas con momentum superior al mercado"
                 ]
             }
             print("✓ Estadísticas para dashboard sin resultados")
