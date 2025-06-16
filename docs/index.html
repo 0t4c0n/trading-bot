@@ -36,6 +36,18 @@
             text-align: center;
         }
         
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 100%;
+        }
+        
+        .title-section {
+            flex: 1;
+            text-align: left;
+        }
+        
         .header h1 {
             font-size: 1.5em;
             margin-bottom: 5px;
@@ -44,6 +56,56 @@
         .header .subtitle {
             opacity: 0.9;
             font-size: 0.9em;
+        }
+        
+        .creator-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 10px 16px;
+            border-radius: 25px;
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        }
+        
+        .creator-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 3px solid rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        
+        .creator-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        
+        .creator-info {
+            text-align: right;
+            line-height: 1.2;
+        }
+        
+        .creator-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            color: white;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+        
+        .creator-label {
+            font-size: 0.8em;
+            opacity: 0.9;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
         
         .summary {
@@ -235,6 +297,17 @@
             background: #f8f9fa;
         }
         
+        .signature {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e9ecef;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 500;
+        }
+        
         .ma-levels {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -363,10 +436,66 @@
             font-size: 0.9em;
         }
         
+        /* Estilos para información de crecimiento */
+        .growth-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            padding: 8px 0;
+            border-top: 1px solid #f0f0f0;
+        }
+        
+        .growth-badge {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: bold;
+        }
+        
+        .volume-info {
+            font-size: 0.75em;
+            color: #666;
+            font-weight: 500;
+        }
+        
         @media (max-width: 480px) {
             .container {
                 margin: 5px;
                 border-radius: 15px;
+            }
+            
+            .header-content {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+            
+            .title-section {
+                text-align: center;
+            }
+            
+            .creator-section {
+                order: -1;
+                align-self: center;
+                padding: 12px 18px;
+                gap: 15px;
+            }
+            
+            .creator-avatar {
+                width: 70px;
+                height: 70px;
+                border-width: 4px;
+            }
+            
+            .creator-name {
+                font-size: 1.2em;
+            }
+            
+            .creator-label {
+                font-size: 0.85em;
             }
             
             .summary-grid {
@@ -384,8 +513,21 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📈 Trading Bot</h1>
-            <div class="subtitle">Top Acciones Filtradas</div>
+            <div class="header-content">
+                <div class="title-section">
+                    <h1>📈 Trading Bot</h1>
+                    <div class="subtitle">Top Acciones Filtradas</div>
+                </div>
+                <div class="creator-section">
+                    <div class="creator-avatar">
+                        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="0t4c0n" id="creator-img">
+                    </div>
+                    <div class="creator-info">
+                        <div class="creator-name">0t4c0n</div>
+                        <div class="creator-label">Creator</div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div id="content">
@@ -401,6 +543,16 @@
 
     <script>
         let lastUpdateTime = null;
+        
+        // Función para cargar imagen de perfil desde archivo
+        function loadProfileImage() {
+            // Configurar imagen por defecto (pixel art de 0t4c0n más grande y detallado)
+            setDefaultAvatar();
+        }
+        
+        function setDefaultAvatar() {
+            document.getElementById('creator-img').src = "data:image/jpeg;base64,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";
+        }
         
         function getNextUpdateTime() {
             const now = new Date();
@@ -462,14 +614,17 @@
                         "last_day": "Positivo",
                         "earnings": "Positivos último trimestre",
                         "volume_boost": "+25% vs promedio 50d",
-                        "revenue_growth": "🚀 Crecimiento ingresos anuales > +15%"
+                        "growth_flexible": "🚀 Ingresos >+15% O Beneficios >+25%",
+                        "relative_strength": "💪 Outperform SPY +3% (20d)"
                     },
                     "statistics": {
                         "message": "Datos de ejemplo para testing local",
                         "suggestions": [
                             "Para datos reales, sirve desde servidor HTTP",
                             "Ejecuta: python -m http.server 8000",
-                            "Luego abre: http://localhost:8000"
+                            "Luego abre: http://localhost:8000",
+                            "8 filtros incluyen Relative Strength vs SPY",
+                            "Avatar estático con branding de 0t4c0n"
                         ]
                     }
                 };
@@ -484,6 +639,7 @@
                         <strong>⚠️ Modo Testing Local</strong><br>
                         <small>
                             No se pueden cargar datos reales desde archivo local.<br>
+                            Avatar estático de 0t4c0n cargado correctamente.<br>
                             Para datos reales:<br>
                             1. <code>cd docs</code><br>
                             2. <code>python -m http.server 8000</code><br>
@@ -565,8 +721,19 @@
                                     <div class="metric-label">Vol boost</div>
                                 </div>
                                 <div class="metric">
-                                    <div class="metric-value">${stock.metrics.volume_50d_millions}M</div>
-                                    <div class="metric-label">Vol 50d</div>
+                                    <div class="metric-value positive">
+                                        +${stock.metrics.relative_strength || 0}%
+                                    </div>
+                                    <div class="metric-label">vs SPY (20d)</div>
+                                </div>
+                            </div>
+                            
+                            <div class="growth-info">
+                                <div class="growth-badge">
+                                    🚀 ${stock.metrics.growth_type || 'Growth'}
+                                </div>
+                                <div class="volume-info">
+                                    📊 ${stock.metrics.volume_50d_millions}M vol 50d
                                 </div>
                             </div>
                             
@@ -584,7 +751,7 @@
                     <div class="no-results">
                         <div class="no-results-icon">🔍</div>
                         <div class="no-results-title">Sin resultados para ${data.market_date}</div>
-                        <div class="no-results-subtitle">Ninguna acción pasó los 7 filtros técnicos hoy</div>
+                        <div class="no-results-subtitle">Ninguna acción pasó los 8 filtros técnicos hoy</div>
                         <div class="no-results-details">
                             <div class="filter-summary">
                                 <div class="filter-summary-title">📋 Filtros aplicados:</div>
@@ -595,7 +762,8 @@
                                     <div class="filter-item">✅ Último día positivo</div>
                                     <div class="filter-item">✅ Beneficios trimestrales +</div>
                                     <div class="filter-item">✅ Volumen +25% vs promedio</div>
-                                    <div class="filter-item">🚀 Crecimiento ingresos +15%</div>
+                                    <div class="filter-item">🚀 Ingresos +15% O Beneficios +25%</div>
+                                    <div class="filter-item">💪 Outperform SPY +3% (20d)</div>
                                 </div>
                             </div>
                             <div class="suggestions">
@@ -619,7 +787,10 @@
             const footerHtml = `
                 <div class="last-update">
                     📅 Última actualización: ${updateTime}<br>
-                    🗓️ Fecha de mercado: ${data.market_date}
+                    🗓️ Fecha de mercado: ${data.market_date}<br>
+                    <div class="signature">
+                        <small>🚀 Desarrollado por <strong>0t4c0n</strong> | Trading Bot Automatizado</small>
+                    </div>
                 </div>
             `;
             
@@ -627,7 +798,10 @@
         }
         
         // Cargar datos al iniciar
-        loadData();
+        document.addEventListener('DOMContentLoaded', function() {
+            loadData();
+            loadProfileImage();
+        });
         
         // Auto-refresh cada 5 minutos si está activo
         setInterval(() => {
