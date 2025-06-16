@@ -223,6 +223,18 @@ class USStockMovingAveragesExtractor:
                 except:
                     quarterly_earnings_positive = None
             
+            # 7. NUEVO: Crecimiento de ingresos > 15% anual (FILTRO DE CRECIMIENTO)
+            revenue_growth_positive = None
+            if ticker_info:
+                try:
+                    revenue_growth = ticker_info.get('revenueGrowth')
+                    if revenue_growth is not None:
+                        revenue_growth_positive = revenue_growth > 0.15  # 15% crecimiento anual
+                    else:
+                        revenue_growth_positive = None
+                except:
+                    revenue_growth_positive = None
+            
             # Análisis de tendencia general
             if pd.notna(ma_10) and pd.notna(ma_21) and pd.notna(ma_50) and pd.notna(ma_200):
                 if ma_10 > ma_21 > ma_50 > ma_200:
@@ -238,7 +250,7 @@ class USStockMovingAveragesExtractor:
             else:
                 trend = "Datos insuficientes"
             
-            # APLICAR FILTROS (CORREGIDOS)
+            # APLICAR FILTROS (CORREGIDOS) - AHORA 7 FILTROS
             passes_filters = True
             filter_reasons = []
             
@@ -294,6 +306,14 @@ class USStockMovingAveragesExtractor:
                 vol_pct = ((volume_ratio_vs_50d - 1) * 100) if volume_ratio_vs_50d else 0
                 filter_reasons.append(f"Vol insuficiente: {vol_pct:+.0f}% vs 50d")
             
+            # Filtro 7: Crecimiento de ingresos > 15% anual (NUEVO - FILTRO DE CRECIMIENTO)
+            if revenue_growth_positive == None:
+                passes_filters = False
+                filter_reasons.append("Sin datos revenue growth")
+            elif revenue_growth_positive == False:
+                passes_filters = False
+                filter_reasons.append("Crecimiento ingresos <15%")
+            
             # Solo si pasa TODOS los filtros
             if passes_filters:
                 filter_reasons = ["✅ PASA TODOS LOS FILTROS"]
@@ -318,6 +338,7 @@ class USStockMovingAveragesExtractor:
                 'last_day_positive': last_day_positive,
                 'last_day_change_pct': round(last_day_change_pct, 2) if 'last_day_change_pct' in locals() else None,
                 'quarterly_earnings_positive': quarterly_earnings_positive,
+                'revenue_growth_positive': revenue_growth_positive,
                 'passes_filters': passes_filters,
                 'filter_reasons': filter_reasons
             }
@@ -413,6 +434,7 @@ class USStockMovingAveragesExtractor:
                     'Last_Day_Change_Pct': ma_status.get('last_day_change_pct'),
                     'Last_Day_Positive': ma_status.get('last_day_positive'),
                     'Quarterly_Earnings_Positive': ma_status.get('quarterly_earnings_positive'),
+                    'Revenue_Growth_Positive': ma_status.get('revenue_growth_positive'),
                     'Above_MA_10': ma_status.get('above_ma_10'),
                     'Above_MA_21': ma_status.get('above_ma_21'),
                     'Above_MA_50': ma_status.get('above_ma_50'),
@@ -466,7 +488,7 @@ def main():
         sys.exit(1)
     
     # CAMBIO PRINCIPAL: Procesar TODAS las acciones, no solo una muestra
-    symbols_to_process = all_symbols  # SIN LÍMITE - ANÁLISIS COMPLETO
+    symbols_to_process = all_symbols[0:200]  #TODO cambiar 
     print(f"🚀 Procesando {len(symbols_to_process)} acciones COMPLETAS (NYSE + NASDAQ)...")
     print("⚠️  Esto tomará entre 45-90 minutos para completar")
     
@@ -500,8 +522,8 @@ def main():
         
         # Pausa entre lotes para evitar rate limiting
         if batch_num < total_batches - 1:  # No pausar después del último lote
-            print("⏳ Pausa de 30 segundos entre lotes...")
-            time.sleep(30)
+            print("⏳ Pausa de 15 segundos entre lotes...")
+            time.sleep(15)
     
     print(f"\n=== PROCESAMIENTO COMPLETO FINALIZADO ===")
     print(f"📊 Total acciones procesadas exitosamente: {len(all_stock_data)}")

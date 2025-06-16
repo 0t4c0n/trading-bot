@@ -51,7 +51,7 @@ El script se ejecutará automáticamente:
 
 ## 🔍 Filtros Aplicados
 
-El bot aplica 6 filtros técnicos estrictos:
+El bot aplica 7 filtros técnicos y de crecimiento estrictos:
 
 1. **Volumen**: Promedio 50 días ≥ 300,000
 2. **Precio vs MA50**: Entre 0% y +5%
@@ -59,6 +59,7 @@ El bot aplica 6 filtros técnicos estrictos:
 4. **Último día**: Debe cerrar en positivo
 5. **Beneficios**: Último trimestre positivo
 6. **Volumen boost**: Último día +25% vs promedio 50d
+7. **🚀 Crecimiento**: Ingresos anuales > +15% (NUEVO - Filtro de crecimiento)
 
 ## 📊 Dashboard Móvil
 
