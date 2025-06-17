@@ -1,12 +1,9 @@
-# script_automated.py - Versión automatizada para GitHub Actions
 import yfinance as yf
 import pandas as pd
 import requests
 import time
 from datetime import datetime, timedelta
 import json
-import os
-import sys
 from io import StringIO
 
 class USStockMovingAveragesExtractor:
@@ -34,7 +31,6 @@ class USStockMovingAveragesExtractor:
             
         except Exception as e:
             print(f"Error obteniendo símbolos: {e}")
-            # Lista de respaldo con principales de ambos exchanges
             backup_symbols = self.get_backup_symbols()
             print(f"Usando lista de respaldo: {len(backup_symbols)} símbolos")
             return backup_symbols
@@ -42,7 +38,6 @@ class USStockMovingAveragesExtractor:
     def get_exchange_symbols(self, exchange):
         """Obtiene símbolos de un exchange específico (NYSE o NASDAQ)"""
         try:
-            # Método 1: Usando NASDAQ API
             url = "https://api.nasdaq.com/api/screener/stocks"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -70,64 +65,66 @@ class USStockMovingAveragesExtractor:
     
     def get_backup_symbols(self):
         """Lista de respaldo con principales acciones de NYSE y NASDAQ"""
-        # Principales NYSE
         nyse_major = [
-            # Financieros
             'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'AXP', 'USB', 'PNC', 'TFC',
             'COF', 'SCHW', 'BLK', 'SPGI', 'ICE', 'CME', 'MCO', 'AON', 'MMC',
-            
-            # Industriales
             'CAT', 'BA', 'GE', 'HON', 'LMT', 'RTX', 'MMM', 'UPS', 'DE', 'EMR',
             'ITW', 'ETN', 'PH', 'ROK', 'DOV', 'XYL', 'IEX', 'FTV', 'AME',
-            
-            # Consumo
             'WMT', 'HD', 'PG', 'KO', 'PEP', 'COST', 'TGT', 'LOW', 'NKE', 'SBUX',
             'MCD', 'DIS', 'CL', 'KMB', 'CHD', 'SJM', 'GIS', 'K', 'CPB',
-            
-            # Salud
             'JNJ', 'PFE', 'ABT', 'MRK', 'LLY', 'BMY', 'AMGN', 'GILD', 'MDT',
             'DHR', 'TMO', 'A', 'SYK', 'BSX', 'EW', 'HOLX', 'ZBH', 'BAX', 'BDX',
-            
-            # Energía
             'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'PXD', 'KMI', 'OKE', 'WMB', 'EPD',
             'ET', 'MPLX', 'PSX', 'VLO', 'MPC', 'HES', 'DVN', 'FANG', 'APA',
-            
-            # Telecomunicaciones
             'T', 'VZ', 'CMCSA', 'CHTR', 'TMUS', 'S'
         ]
         
-        # Principales NASDAQ
         nasdaq_major = [
-            # Tecnología
             'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'TSLA', 'META', 'NFLX',
             'NVDA', 'ADBE', 'PYPL', 'INTC', 'CSCO', 'AVGO', 'TXN', 'QCOM',
             'INTU', 'ISRG', 'FISV', 'ADP', 'BIIB', 'ILMN', 'MRNA', 'ZM', 'DOCU',
             'SNOW', 'PLTR', 'RBLX', 'U', 'TWLO', 'OKTA', 'DDOG', 'CRWD',
-            
-            # Biotecnología
             'GILD', 'REGN', 'VRTX', 'BMRN', 'ALXN', 'CELG', 'BIIB', 'AMGN',
-            
-            # Consumo/Retail
             'BKNG', 'EBAY', 'SBUX', 'ROST', 'ULTA', 'LULU', 'NTES', 'JD',
             'BABA', 'PDD', 'MELI', 'SE', 'SHOP', 'SQ', 'ROKU', 'SPOT',
-            
-            # Semiconductores
             'NVDA', 'AMD', 'INTC', 'QCOM', 'AVGO', 'TXN', 'ADI', 'KLAC', 'LRCX',
             'AMAT', 'MU', 'MRVL', 'SWKS', 'MCHP', 'XLNX', 'NXPI', 'TSM',
-            
-            # Servicios
             'NFLX', 'ROKU', 'SPOT', 'UBER', 'LYFT', 'DASH', 'ABNB', 'ZOOM',
             'TDOC', 'PTON', 'PINS', 'SNAP', 'TWTR', 'FB', 'WORK'
         ]
         
-        # Combinar y eliminar duplicados
         all_backup = list(set(nyse_major + nasdaq_major))
         return all_backup
+    
+    def calculate_spy_return_20d(self):
+        """Calcula el rendimiento de SPY en 20 días - SOLO UNA VEZ"""
+        print("🔍 Descargando datos de SPY para análisis de Relative Strength...")
+        
+        try:
+            spy_ticker = yf.Ticker("SPY")
+            spy_data = spy_ticker.history(period="2mo")
+            
+            if spy_data.empty or len(spy_data) < 21:
+                print("⚠️ SPY: Datos insuficientes - Relative Strength deshabilitado")
+                return None
+            else:
+                spy_current = spy_data['Close'].iloc[-1]
+                spy_20d_ago = spy_data['Close'].iloc[-21]
+                spy_return_20d = ((spy_current / spy_20d_ago) - 1) * 100
+                
+                print(f"✅ SPY: {len(spy_data)} días descargados")
+                print(f"✅ SPY rendimiento 20 días: {spy_return_20d:+.2f}%")
+                print(f"💡 Valor SPY reutilizado en todos los lotes")
+                
+                return spy_return_20d
+                
+        except Exception as e:
+            print(f"⚠️ Error descargando SPY: {e} - Relative Strength deshabilitado")
+            return None
     
     def calculate_moving_averages(self, df):
         """Calcula las medias móviles de 10, 21, 50 y 200 días"""
         try:
-            # Calcular medias móviles usando el precio de cierre
             df['MA_10'] = df['Close'].rolling(window=10).mean()
             df['MA_21'] = df['Close'].rolling(window=21).mean() 
             df['MA_50'] = df['Close'].rolling(window=50).mean()
@@ -138,83 +135,71 @@ class USStockMovingAveragesExtractor:
             print(f"Error calculando medias móviles: {e}")
             return df
     
-    def get_current_ma_status(self, df, ticker_info=None, spy_data=None):
+    def get_current_ma_status(self, df, ticker_info=None, spy_return_20d=None):
         """Obtiene el estado actual de las medias móviles y métricas de filtrado"""
         try:
             if df.empty or len(df) < 200:
                 return {
                     'current_price': None,
-                    'ma_10': None,
-                    'ma_21': None,
-                    'ma_50': None,
-                    'ma_200': None,
-                    'above_ma_10': None,
-                    'above_ma_21': None,
-                    'above_ma_50': None,
-                    'above_ma_200': None,
+                    'ma_10': None, 'ma_21': None, 'ma_50': None, 'ma_200': None,
+                    'above_ma_10': None, 'above_ma_21': None, 'above_ma_50': None, 'above_ma_200': None,
                     'ma_trend': 'Insuficientes datos',
-                    'volume_50d_avg': None,
-                    'last_day_volume': None,
-                    'volume_ratio_vs_50d': None,
-                    'volume_above_25pct': None,
-                    'price_vs_ma50_pct': None,
-                    'ma200_trend_positive': None,
-                    'last_day_positive': None,
-                    'quarterly_earnings_positive': None,
-                    'passes_filters': False,
-                    'filter_reasons': ['Datos insuficientes']
+                    'volume_50d_avg': None, 'last_day_volume': None, 'volume_ratio_vs_50d': None,
+                    'volume_above_25pct': None, 'price_vs_ma50_pct': None, 'ma200_trend_positive': None,
+                    'last_day_positive': None, 'quarterly_earnings_positive': None,
+                    'revenue_growth_positive': None, 'earnings_growth_positive': None, 'growth_criteria_met': None,
+                    'relative_strength_vs_spy': None, 'relative_strength_value': None,
+                    'passes_filters': False, 'filter_reasons': ['Datos insuficientes']
                 }
             
             latest = df.iloc[-1]
             previous = df.iloc[-2] if len(df) >= 2 else None
             current_price = latest['Close']
             
-            # Determinar tendencia basada en orden de MAs
+            # Medias móviles
             ma_10 = latest['MA_10']
             ma_21 = latest['MA_21'] 
             ma_50 = latest['MA_50']
             ma_200 = latest['MA_200']
             
-            # FILTROS ESPECÍFICOS
-            # 1. Volumen promedio últimos 50 días (MODIFICADO)
+            # Filtro 1: Volumen promedio últimos 50 días
             volume_50d_avg = df['Volume'].tail(50).mean() if len(df) >= 50 else None
             
-            # 6. NUEVO: Volumen último día vs promedio 50 días
+            # Filtro 2: Volumen último día vs promedio 50 días
             last_day_volume = latest['Volume']
             volume_ratio_vs_50d = None
             volume_above_25pct = None
             if volume_50d_avg and volume_50d_avg > 0:
                 volume_ratio_vs_50d = (last_day_volume / volume_50d_avg)
-                volume_above_25pct = volume_ratio_vs_50d >= 1.25  # 25% superior
+                volume_above_25pct = volume_ratio_vs_50d >= 1.25
             
-            # 2. Porcentaje respecto a MA50 (MODIFICADO: 0% a 5%)
+            # Filtro 3: Porcentaje respecto a MA50
             price_vs_ma50_pct = None
             if pd.notna(ma_50) and ma_50 > 0:
                 price_vs_ma50_pct = ((current_price - ma_50) / ma_50) * 100
             
-            # 3. Tendencia de MA200 (comparar últimos 10 días con 10 días anteriores)
+            # Filtro 4: Tendencia de MA200
             ma200_trend_positive = None
             if len(df) >= 220 and pd.notna(df['MA_200'].iloc[-1]) and pd.notna(df['MA_200'].iloc[-11]):
                 ma200_recent = df['MA_200'].tail(10).mean()
                 ma200_previous = df['MA_200'].iloc[-20:-10].mean()
                 ma200_trend_positive = ma200_recent > ma200_previous
             
-            # 4. NUEVO: Último día positivo
+            # Filtro 5: Último día positivo
             last_day_positive = None
+            last_day_change_pct = None
             if previous is not None:
                 last_day_change_pct = ((current_price - previous['Close']) / previous['Close']) * 100
                 last_day_positive = last_day_change_pct > 0
             
-            # 5. NUEVO: Beneficios último trimestre
+            # Filtro 6: Beneficios último trimestre
             quarterly_earnings_positive = None
             if ticker_info:
                 try:
-                    # Intentar obtener datos financieros
                     quarterly_earnings = ticker_info.get('quarterlyEarningsGrowthYOY')
                     if quarterly_earnings is not None:
                         quarterly_earnings_positive = quarterly_earnings > 0
                     else:
-                        # Alternativa: usar earnings trimestrales más recientes
                         net_income = ticker_info.get('netIncomeToCommon')
                         if net_income is not None:
                             quarterly_earnings_positive = net_income > 0
@@ -223,17 +208,50 @@ class USStockMovingAveragesExtractor:
                 except:
                     quarterly_earnings_positive = None
             
-            # 7. NUEVO: Crecimiento de ingresos > 15% anual (FILTRO DE CRECIMIENTO)
+            # FILTRO 7: CRECIMIENTO FLEXIBLE (Ingresos >15% OR Beneficios >25%)
             revenue_growth_positive = None
+            earnings_growth_positive = None
+            growth_criteria_met = None
+            
             if ticker_info:
                 try:
+                    # Crecimiento de ingresos > 15%
                     revenue_growth = ticker_info.get('revenueGrowth')
                     if revenue_growth is not None:
-                        revenue_growth_positive = revenue_growth > 0.15  # 15% crecimiento anual
+                        revenue_growth_positive = revenue_growth > 0.15
+                    
+                    # Crecimiento de beneficios > 25%
+                    earnings_growth = ticker_info.get('earningsGrowthYOY')
+                    if earnings_growth is not None:
+                        earnings_growth_positive = earnings_growth > 0.25
+                    
+                    # CRITERIO OR: Cualquiera de los dos debe cumplirse
+                    if revenue_growth_positive is not None or earnings_growth_positive is not None:
+                        growth_criteria_met = (revenue_growth_positive == True) or (earnings_growth_positive == True)
                     else:
-                        revenue_growth_positive = None
+                        growth_criteria_met = None
+                        
                 except:
                     revenue_growth_positive = None
+                    earnings_growth_positive = None
+                    growth_criteria_met = None
+            
+            # FILTRO 8: RELATIVE STRENGTH VS SPY (+3% outperformance en 20 días)
+            relative_strength_vs_spy = None
+            relative_strength_value = None
+            
+            if spy_return_20d is not None and len(df) >= 21:
+                try:
+                    # Calcular rendimiento de la acción últimos 20 días
+                    stock_return = ((current_price / df['Close'].iloc[-21]) - 1) * 100
+                    
+                    # Comparar con rendimiento de SPY pre-calculado
+                    relative_strength_value = stock_return - spy_return_20d
+                    relative_strength_vs_spy = relative_strength_value > 3.0  # 3% mejor que SPY
+                    
+                except Exception as e:
+                    relative_strength_vs_spy = None
+                    relative_strength_value = None
             
             # Análisis de tendencia general
             if pd.notna(ma_10) and pd.notna(ma_21) and pd.notna(ma_50) and pd.notna(ma_200):
@@ -250,11 +268,11 @@ class USStockMovingAveragesExtractor:
             else:
                 trend = "Datos insuficientes"
             
-            # APLICAR FILTROS (CORREGIDOS) - AHORA 7 FILTROS
+            # APLICAR LOS 8 FILTROS
             passes_filters = True
             filter_reasons = []
             
-            # Filtro 1: Volumen promedio mínimo 300,000 (basado en 50 días)
+            # Filtro 1: Volumen promedio mínimo 300,000
             if volume_50d_avg == None:
                 passes_filters = False
                 filter_reasons.append("Sin datos vol 50d")
@@ -289,7 +307,7 @@ class USStockMovingAveragesExtractor:
                 passes_filters = False
                 filter_reasons.append("Último día negativo")
             
-            # Filtro 5: Beneficios último trimestre positivos (CORREGIDO)
+            # Filtro 5: Beneficios último trimestre positivos
             if quarterly_earnings_positive == None:
                 passes_filters = False
                 filter_reasons.append("Sin datos earnings")
@@ -306,13 +324,26 @@ class USStockMovingAveragesExtractor:
                 vol_pct = ((volume_ratio_vs_50d - 1) * 100) if volume_ratio_vs_50d else 0
                 filter_reasons.append(f"Vol insuficiente: {vol_pct:+.0f}% vs 50d")
             
-            # Filtro 7: Crecimiento de ingresos > 15% anual (NUEVO - FILTRO DE CRECIMIENTO)
-            if revenue_growth_positive == None:
+            # Filtro 7: CRECIMIENTO FLEXIBLE (Ingresos >15% OR Beneficios >25%)
+            if growth_criteria_met == None:
                 passes_filters = False
-                filter_reasons.append("Sin datos revenue growth")
-            elif revenue_growth_positive == False:
+                filter_reasons.append("Sin datos growth")
+            elif growth_criteria_met == False:
+                rev_status = f"Ingresos:{revenue_growth*100:.1f}%" if revenue_growth_positive is not None else "Ingresos:N/A"
+                earn_status = f"Beneficios:{earnings_growth*100:.1f}%" if earnings_growth_positive is not None else "Beneficios:N/A"
                 passes_filters = False
-                filter_reasons.append("Crecimiento ingresos <15%")
+                filter_reasons.append(f"Growth insuficiente ({rev_status}, {earn_status})")
+            
+            # Filtro 8: RELATIVE STRENGTH VS SPY (+3% outperformance)
+            if relative_strength_vs_spy == None:
+                passes_filters = False
+                filter_reasons.append("Sin datos SPY comparison")
+            elif relative_strength_vs_spy == False:
+                passes_filters = False
+                if relative_strength_value is not None:
+                    filter_reasons.append(f"Underperform SPY: {relative_strength_value:+.1f}%")
+                else:
+                    filter_reasons.append("Underperform SPY")
             
             # Solo si pasa TODOS los filtros
             if passes_filters:
@@ -336,9 +367,13 @@ class USStockMovingAveragesExtractor:
                 'price_vs_ma50_pct': round(price_vs_ma50_pct, 2) if price_vs_ma50_pct else None,
                 'ma200_trend_positive': ma200_trend_positive,
                 'last_day_positive': last_day_positive,
-                'last_day_change_pct': round(last_day_change_pct, 2) if 'last_day_change_pct' in locals() else None,
+                'last_day_change_pct': round(last_day_change_pct, 2) if last_day_change_pct else None,
                 'quarterly_earnings_positive': quarterly_earnings_positive,
                 'revenue_growth_positive': revenue_growth_positive,
+                'earnings_growth_positive': earnings_growth_positive,
+                'growth_criteria_met': growth_criteria_met,
+                'relative_strength_vs_spy': relative_strength_vs_spy,
+                'relative_strength_value': round(relative_strength_value, 2) if relative_strength_value else None,
                 'passes_filters': passes_filters,
                 'filter_reasons': filter_reasons
             }
@@ -347,38 +382,25 @@ class USStockMovingAveragesExtractor:
             print(f"Error analizando estado de MAs: {e}")
             return {'ma_trend': 'Error en cálculo', 'passes_filters': False, 'filter_reasons': ['Error de cálculo']}
     
-    def get_stock_data_with_ma(self, symbols, period="1y"):
-        """Obtiene datos y calcula medias móviles"""
+    def get_stock_data_with_ma(self, symbols, spy_return_20d=None, period="1y"):
+        """Obtiene datos y calcula medias móviles usando SPY pre-calculado"""
         stock_data = {}
         failed_symbols = []
         
-        # Descargar SPY para comparaciones de Relative Strength
-        print("Descargando datos de SPY para comparaciones...")
-        try:
-            spy_ticker = yf.Ticker("SPY")
-            spy_data = spy_ticker.history(period=period)
-            if spy_data.empty:
-                print("⚠️ No se pudieron obtener datos de SPY")
-                spy_data = None
-            else:
-                print(f"✓ SPY data: {len(spy_data)} días obtenidos")
-        except Exception as e:
-            print(f"⚠️ Error descargando SPY: {e}")
-            spy_data = None
-        
-        print(f"Descargando datos para {len(symbols)} acciones...")
+        print(f"📊 Procesando {len(symbols)} acciones con SPY pre-calculado...")
+        if spy_return_20d is not None:
+            print(f"🎯 Usando SPY return: {spy_return_20d:+.2f}% (calculado una sola vez)")
+        else:
+            print(f"⚠️ SPY return no disponible - Relative Strength deshabilitado")
         
         for i, symbol in enumerate(symbols):
             try:
-                # Descargar datos históricos
                 ticker = yf.Ticker(symbol)
                 hist = ticker.history(period=period)
                 
                 if not hist.empty and len(hist) >= 10:
-                    # Calcular medias móviles
                     hist_with_ma = self.calculate_moving_averages(hist)
                     
-                    # Obtener info básica del ticker para earnings
                     try:
                         ticker_info = ticker.info
                         company_info = {
@@ -391,8 +413,8 @@ class USStockMovingAveragesExtractor:
                         ticker_info = {}
                         company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
                     
-                    # Obtener estado actual de las MAs (con SPY data para relative strength)
-                    ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_data)
+                    # Pasar el SPY return pre-calculado
+                    ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_return_20d)
                     
                     stock_data[symbol] = {
                         'data': hist_with_ma,
@@ -401,12 +423,23 @@ class USStockMovingAveragesExtractor:
                     }
                     
                     filter_status = "✅ PASA" if ma_status['passes_filters'] else "❌ FILTRADO"
-                    print(f"{filter_status} {symbol} - ${ma_status.get('current_price', 0):.2f} - {i+1}/{len(symbols)}")
+                    price = ma_status.get('current_price', 0)
+                    rel_strength = ma_status.get('relative_strength_value', 0)
+                    rel_str = f"SPY{rel_strength:+.1f}%" if rel_strength else "SPY:N/A"
+                    
+                    # Mostrar razón de filtrado si no pasa
+                    if ma_status['passes_filters']:
+                        reason_str = ""
+                    else:
+                        reasons = ma_status.get('filter_reasons', ['Sin razón'])
+                        first_reason = reasons[0] if reasons else 'Sin razón'
+                        reason_str = f" - [{first_reason}]"
+                    
+                    print(f"{filter_status} {symbol} - ${price:.2f} - {rel_str}{reason_str} - {i+1}/{len(symbols)}")
                 else:
                     failed_symbols.append(symbol)
                     print(f"✗ {symbol} - Datos insuficientes")
                 
-                # Pausa para evitar rate limiting
                 time.sleep(0.1)
                 
             except Exception as e:
@@ -419,7 +452,6 @@ class USStockMovingAveragesExtractor:
         """Guarda los datos con medias móviles y aplicación de filtros"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Crear resumen con medias móviles y filtros
         all_data = []
         filtered_data = []
         
@@ -467,17 +499,14 @@ class USStockMovingAveragesExtractor:
                 
                 all_data.append(row_data)
                 
-                # Solo añadir a datos filtrados si pasa todos los filtros
                 if ma_status.get('passes_filters', False):
                     filtered_data.append(row_data)
         
-        # Guardar TODOS los datos
         all_df = pd.DataFrame(all_data)
         all_filename = f"{filename_prefix}_ALL_DATA_{timestamp}.csv"
         all_df.to_csv(all_filename, index=False)
         print(f"✓ Todos los datos guardados: {all_filename}")
         
-        # Guardar SOLO datos que pasan filtros
         if filtered_data:
             filtered_df = pd.DataFrame(filtered_data)
             filtered_filename = f"{filename_prefix}_FILTERED_ONLY_{timestamp}.csv"
@@ -491,33 +520,36 @@ class USStockMovingAveragesExtractor:
         return all_df, filtered_df
 
 def main():
-    """Función principal para GitHub Actions - ANÁLISIS COMPLETO"""
-    print("=== TRADING BOT AUTOMATIZADO - ANÁLISIS COMPLETO ===")
+    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS OPTIMIZADO"""
+    print("=== TRADING BOT AUTOMATIZADO - 8 FILTROS OPTIMIZADO ===")
     
-    # Crear instancia del extractor
     extractor = USStockMovingAveragesExtractor()
     
-    # Para automatización completa, usar TODAS las acciones disponibles
     print("1. Obteniendo TODOS los símbolos NYSE + NASDAQ...")
     all_symbols = extractor.get_nyse_nasdaq_symbols()
     
     if not all_symbols:
         print("❌ No se pudieron obtener símbolos")
-        sys.exit(1)
+        exit(1)
     
-    # CAMBIO PRINCIPAL: Procesar TODAS las acciones, no solo una muestra
-    symbols_to_process = all_symbols  # SIN LÍMITE - ANÁLISIS COMPLETO
-    print(f"🚀 Procesando {len(symbols_to_process)} acciones COMPLETAS (NYSE + NASDAQ)...")
-    print("⚠️  Esto tomará entre 45-90 minutos para completar")
+    # PASO CLAVE: Calcular SPY return solo UNA VEZ al inicio
+    print("\n🎯 OPTIMIZACIÓN: Calculando SPY return solo una vez...")
+    spy_return_20d = extractor.calculate_spy_return_20d()
     
-    # Dividir en lotes para mejor manejo de memoria y progreso
+    # ANÁLISIS COMPLETO - TODAS las acciones
+    symbols_to_process = all_symbols
+    print(f"\n🚀 Procesando {len(symbols_to_process)} acciones completas (NYSE + NASDAQ)...")
+    print("⚠️  Duración estimada: 40-80 minutos")
+    print("🔥 OPTIMIZADO: SPY calculado solo una vez y reutilizado en todos los lotes")
+    
+    # Dividir en lotes para mejor manejo
     batch_size = 100
     total_batches = (len(symbols_to_process) + batch_size - 1) // batch_size
     
     all_stock_data = {}
     all_failed = []
     
-    print(f"📦 Procesando en {total_batches} lotes de {batch_size} acciones...")
+    print(f"\n📦 Procesando en {total_batches} lotes de {batch_size} acciones...")
     
     for batch_num in range(total_batches):
         start_idx = batch_num * batch_size
@@ -527,25 +559,23 @@ def main():
         print(f"\n=== LOTE {batch_num + 1}/{total_batches} ===")
         print(f"Procesando acciones {start_idx + 1}-{end_idx} de {len(symbols_to_process)}")
         
-        # Procesar lote
-        batch_data, batch_failed = extractor.get_stock_data_with_ma(batch_symbols)
+        # PASAMOS el SPY pre-calculado a cada lote
+        batch_data, batch_failed = extractor.get_stock_data_with_ma(batch_symbols, spy_return_20d)
         
-        # Agregar a resultados totales
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
         
-        # Estadísticas del lote
         batch_passed = sum(1 for data in batch_data.values() if data['ma_status']['passes_filters'])
         print(f"✅ Lote completado: {len(batch_data)} procesadas, {batch_passed} pasan filtros, {len(batch_failed)} fallidas")
         
-        # Pausa entre lotes para evitar rate limiting
-        if batch_num < total_batches - 1:  # No pausar después del último lote
-            print("⏳ Pausa de 30 segundos entre lotes...")
-            time.sleep(30)
+        if batch_num < total_batches - 1:
+            print("⏳ Pausa de 5 segundos entre lotes...")
+            time.sleep(5)
     
     print(f"\n=== PROCESAMIENTO COMPLETO FINALIZADO ===")
     print(f"📊 Total acciones procesadas exitosamente: {len(all_stock_data)}")
     print(f"❌ Total acciones con errores: {len(all_failed)}")
+    print(f"🚀 SPY return: {spy_return_20d:+.2f}%" if spy_return_20d else "⚠️ SPY no disponible")
     
     if all_stock_data:
         print(f"\n3. Guardando resultados completos...")
@@ -555,60 +585,25 @@ def main():
         print(f"🌐 Mercados analizados: NYSE + NASDAQ COMPLETOS")
         print(f"✓ Acciones procesadas exitosamente: {len(all_stock_data):,}")
         print(f"✗ Acciones con errores: {len(all_failed):,}")
-        print(f"🔍 Acciones que PASAN todos los filtros: {len(filtered_summary) if not filtered_summary.empty else 0}")
+        print(f"🔍 Acciones que PASAN todos los 8 filtros: {len(filtered_summary) if not filtered_summary.empty else 0}")
         
         if not filtered_summary.empty:
             filter_rate = (len(filtered_summary) / len(all_stock_data)) * 100
             print(f"📈 Tasa de filtrado exitoso: {filter_rate:.2f}%")
         
-        # Mostrar top 10 para verificación
-        if not filtered_summary.empty:
-            print(f"\n🔝 TOP 10 ACCIONES FILTRADAS (de análisis completo):")
-            # Calcular scores como en el análisis original
-            trend_scores = {
-                'Alcista fuerte': 100,
-                'Alcista': 80,
-                'Lateral/Mixta': 60,
-                'Bajista': 20,
-                'Bajista fuerte': 0
-            }
-            
-            filtered_summary['Trend_Score'] = filtered_summary['MA_Trend'].map(trend_scores).fillna(50)
-            
-            if filtered_summary['Volume_Ratio_vs_50d'].max() > 0:
-                filtered_summary['Volume_Score'] = (filtered_summary['Volume_Ratio_vs_50d'] / filtered_summary['Volume_Ratio_vs_50d'].max() * 50).fillna(0)
-            else:
-                filtered_summary['Volume_Score'] = 0
-                
-            if filtered_summary['Last_Day_Change_Pct'].max() > 0:
-                filtered_summary['Day_Change_Score'] = (filtered_summary['Last_Day_Change_Pct'] / filtered_summary['Last_Day_Change_Pct'].max() * 30).fillna(0)
-            else:
-                filtered_summary['Day_Change_Score'] = 0
-                
-            filtered_summary['MA50_Score'] = filtered_summary['Price_vs_MA50_Pct'].apply(
-                lambda x: 20 - abs(x - 2.5) * 4 if pd.notna(x) else 0
-            )
-            
-            filtered_summary['Total_Score'] = (
-                filtered_summary['Trend_Score'] + 
-                filtered_summary['Volume_Score'] + 
-                filtered_summary['Day_Change_Score'] + 
-                filtered_summary['MA50_Score']
-            )
-            
-            # Mostrar top 10
-            top_10 = filtered_summary.sort_values('Total_Score', ascending=False).head(10)
-            for i, (_, row) in enumerate(top_10.iterrows()):
-                vol_boost = ((row['Volume_Ratio_vs_50d'] - 1) * 100) if pd.notna(row['Volume_Ratio_vs_50d']) else 0
-                print(f"{i+1:2d}. {row['Symbol']:6s} - ${row['Current_Price']:7.2f} - Score: {row['Total_Score']:5.1f} - "
-                      f"MA50: {row['Price_vs_MA50_Pct']:+5.1f}% - Vol: {vol_boost:+4.0f}% - {row['Company_Name'][:25]}")
-        
-        print(f"\n🎯 Archivos CSV generados con datos de {len(all_stock_data):,} acciones")
-        print(f"📱 Dashboard web listo con análisis completo del mercado")
+        print(f"\n🎯 8 Filtros aplicados:")
+        print(f"   - Volumen 50d ≥ 300,000")
+        print(f"   - Precio: 0% ≤ vs MA50 ≤ +5%") 
+        print(f"   - Tendencia MA200 positiva")
+        print(f"   - Último día de mercado positivo")
+        print(f"   - Beneficios último trimestre positivos")
+        print(f"   - Volumen último día ≥ +25% vs promedio 50d")
+        print(f"   - 🚀 Crecimiento: Ingresos >+15% OR Beneficios >+25%")
+        print(f"   - 💪 Relative Strength: Outperform SPY +3% (20d)")
         
     else:
         print("❌ No se pudieron obtener datos de ninguna acción")
-        sys.exit(1)
+        exit(1)
 
 if __name__ == "__main__":
     main()
