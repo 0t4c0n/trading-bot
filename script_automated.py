@@ -475,7 +475,7 @@ class USStockMovingAveragesExtractor:
                         break
                 
                 if success or retry_count >= max_retries:
-                    time.sleep(0.2)  # Ajustado a 0.2s
+                    time.sleep(0.2)  # 0.2s entre acciones
                     
         return stock_data, failed_symbols
     
@@ -550,7 +550,7 @@ class USStockMovingAveragesExtractor:
         return all_df, filtered_df
 
 def main():
-    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS OPTIMIZADO + RATE LIMITING"""
+    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS + ANÁLISIS DE ELIMINACIÓN"""
     print("=== TRADING BOT AUTOMATIZADO - 8 FILTROS ===")
     
     extractor = USStockMovingAveragesExtractor()
@@ -570,7 +570,7 @@ def main():
     print(f"\nProcesando {len(symbols_to_process)} acciones...")
     
     # Dividir en lotes
-    batch_size = 50  # Ajustado a 50
+    batch_size = 50  # batch_size = 50
     total_batches = (len(symbols_to_process) + batch_size - 1) // batch_size
     
     all_stock_data = {}
@@ -592,8 +592,8 @@ def main():
         print(f"Lote completado: {len(batch_data)} procesadas, {batch_passed} pasan filtros, {len(batch_failed)} errores")
         
         if batch_num < total_batches - 1:
-            print("Pausa 15s...")
-            time.sleep(15)  # 15s entre lotes
+            print("Pausa 10s...")
+            time.sleep(10)  # delay_between_batches = 15s
     
     # Resultados finales
     print(f"\n=== RESUMEN FINAL ===")
@@ -611,31 +611,30 @@ def main():
         if spy_return_20d:
             print(f"SPY 20d: {spy_return_20d:+.2f}%")
         
+        # ANÁLISIS DE RAZONES DE ELIMINACIÓN (TOP 10)
+        if len(all_summary) > 0:
+            print(f"\n=== RAZONES DE ELIMINACIÓN (TOP 10) ===")
+            filter_reasons_count = {}
+            total_stocks = len(all_summary)
+            
+            for _, row in all_summary.iterrows():
+                if not row['Passes_Filters']:
+                    reasons = str(row['Filter_Reasons']).split(';')
+                    for reason in reasons:
+                        reason = reason.strip()
+                        if reason and reason != "✅ PASA TODOS LOS FILTROS" and reason != "nan":
+                            filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
+            
+            # Mostrar top 10 razones
+            for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
+                percentage = (count / total_stocks) * 100
+                print(f"  {reason}: {count} acciones ({percentage:.1f}%)")
+            
+            if not filter_reasons_count:
+                print("  (Todas las acciones pasaron los filtros)")
+        
     else:
         print("❌ No se obtuvieron datos")
-        exit(1)
-    
-    print(f"\n=== PROCESAMIENTO COMPLETO FINALIZADO ===")
-    print(f"📊 Total acciones procesadas exitosamente: {len(all_stock_data)}")
-    print(f"❌ Total acciones con errores: {len(all_failed)}")
-    print(f"🛡️ Rate limiting aplicado: {total_batches} lotes con pausas de 15s")
-    
-    if all_stock_data:
-        print(f"\n3. Guardando resultados completos...")
-        all_summary, filtered_summary = extractor.save_ma_data(all_stock_data)
-        
-        print(f"\n=== RESUMEN FINAL COMPLETO ===")
-        print(f"✓ Acciones procesadas exitosamente: {len(all_stock_data):,}")
-        print(f"✗ Acciones con errores: {len(all_failed):,}")
-        print(f"🔍 Acciones que PASAN todos los 8 filtros: {len(filtered_summary) if not filtered_summary.empty else 0}")
-        
-        if not filtered_summary.empty:
-            filter_rate = (len(filtered_summary) / len(all_stock_data)) * 100
-            print(f"📈 Tasa de filtrado exitoso: {filter_rate:.2f}%")
-        
-    else:
-        print("❌ No se pudieron obtener datos de ninguna acción")
-        print("💡 Intenta reducir batch_size o aumentar delays")
         exit(1)
 
 if __name__ == "__main__":

@@ -343,6 +343,113 @@
             transform: scale(1.1);
         }
         
+        /* Estilos para análisis de eliminación */
+        .elimination-analysis {
+            margin-top: 20px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 15px;
+            padding: 20px;
+            border-left: 4px solid #ff6b6b;
+        }
+        
+        .elimination-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .elimination-title::before {
+            content: "📊";
+            margin-right: 8px;
+        }
+        
+        .elimination-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .elimination-stat {
+            background: white;
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .elimination-stat-number {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ff6b6b;
+        }
+        
+        .elimination-stat-label {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .reasons-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+        
+        .reason-item {
+            background: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 3px solid #ff6b6b;
+        }
+        
+        .reason-text {
+            font-size: 0.9em;
+            color: #495057;
+            flex: 1;
+        }
+        
+        .reason-stats {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            min-width: 80px;
+        }
+        
+        .reason-count {
+            font-weight: bold;
+            color: #ff6b6b;
+            font-size: 0.9em;
+        }
+        
+        .reason-percentage {
+            font-size: 0.8em;
+            color: #666;
+        }
+        
+        .reason-bar {
+            width: 100%;
+            height: 4px;
+            background: #e9ecef;
+            border-radius: 2px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        
+        .reason-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff6b6b, #ff8e8e);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        
         /* Estilos para cuando no hay resultados */
         .no-results {
             text-align: center;
@@ -507,6 +614,25 @@
                 grid-template-columns: repeat(2, 1fr);
                 gap: 8px;
             }
+            
+            .elimination-stats {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+            
+            .reason-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .reason-stats {
+                align-items: flex-start;
+                flex-direction: row;
+                gap: 10px;
+                width: 100%;
+                justify-content: space-between;
+            }
         }
     </style>
 </head>
@@ -617,6 +743,22 @@
                         "growth_flexible": "🚀 Ingresos >+15% O Beneficios >+25%",
                         "relative_strength": "💪 Outperform SPY +3% (20d)"
                     },
+                    "elimination_analysis": {
+                        "total_eliminated": 183,
+                        "elimination_rate": 100.0,
+                        "top_reasons": {
+                            "Underperform SPY: +1.8%": { "count": 78, "percentage": 42.6 },
+                            "Vol 50d bajo: 280000": { "count": 52, "percentage": 28.4 },
+                            "Debajo MA50: -1.2%": { "count": 45, "percentage": 24.6 },
+                            "Último día negativo": { "count": 34, "percentage": 18.6 },
+                            "Vol insuficiente: +18% vs 50d": { "count": 28, "percentage": 15.3 },
+                            "Muy arriba MA50: +6.2%": { "count": 22, "percentage": 12.0 },
+                            "MA200 tendencia negativa": { "count": 20, "percentage": 10.9 },
+                            "Sin datos earnings": { "count": 15, "percentage": 8.2 },
+                            "Beneficios Q negativos": { "count": 11, "percentage": 6.0 },
+                            "Sin datos SPY comparison": { "count": 6, "percentage": 3.3 }
+                        }
+                    },
                     "statistics": {
                         "message": "Datos de ejemplo para testing local",
                         "suggestions": [
@@ -696,7 +838,7 @@
                                     <div class="sector">${stock.sector}</div>
                                 </div>
                                 <div class="stock-price">
-                                    <div class="price">${stock.price}</div>
+                                    <div class="price">$${stock.price}</div>
                                     <div class="score">Score: ${stock.score}</div>
                                 </div>
                             </div>
@@ -778,9 +920,99 @@
                         </div>
                     </div>
                 `;
+                
+                // Añadir análisis de eliminación incluso sin resultados
+                if (data.elimination_analysis && data.elimination_analysis.total_eliminated > 0) {
+                    topPicksHtml += `
+                        <div class="elimination-analysis">
+                            <div class="elimination-title">¿Por qué se eliminaron las acciones?</div>
+                            <div class="elimination-stats">
+                                <div class="elimination-stat">
+                                    <div class="elimination-stat-number">${data.elimination_analysis.total_eliminated}</div>
+                                    <div class="elimination-stat-label">Acciones Analizadas</div>
+                                </div>
+                                <div class="elimination-stat">
+                                    <div class="elimination-stat-number">${data.elimination_analysis.elimination_rate}%</div>
+                                    <div class="elimination-stat-label">Tasa de Eliminación</div>
+                                </div>
+                            </div>
+                            <div class="reasons-list">
+                    `;
+                    
+                    const maxPercentage = Math.max(...Object.values(data.elimination_analysis.top_reasons).map(r => r.percentage));
+                    const sortedReasons = Object.entries(data.elimination_analysis.top_reasons)
+                        .sort((a, b) => b[1].count - a[1].count)
+                        .slice(0, 5); // Solo top 5 para el caso sin resultados
+                    
+                    sortedReasons.forEach(([reason, stats]) => {
+                        const barWidth = (stats.percentage / maxPercentage) * 100;
+                        topPicksHtml += `
+                            <div class="reason-item">
+                                <div class="reason-text">${reason}</div>
+                                <div class="reason-stats">
+                                    <div class="reason-count">${stats.count}</div>
+                                    <div class="reason-percentage">${stats.percentage}%</div>
+                                </div>
+                                <div class="reason-bar">
+                                    <div class="reason-bar-fill" style="width: ${barWidth}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    topPicksHtml += '</div></div>';
+                }
             }
             
             topPicksHtml += '</div>';
+            
+            // Análisis de eliminación
+            let eliminationHtml = '';
+            if (data.elimination_analysis && data.elimination_analysis.total_eliminated > 0) {
+                eliminationHtml = `
+                    <div class="elimination-analysis">
+                        <div class="elimination-title">Análisis de Eliminación - Top 10 Razones</div>
+                        <div class="elimination-stats">
+                            <div class="elimination-stat">
+                                <div class="elimination-stat-number">${data.elimination_analysis.total_eliminated}</div>
+                                <div class="elimination-stat-label">Acciones Eliminadas</div>
+                            </div>
+                            <div class="elimination-stat">
+                                <div class="elimination-stat-number">${data.elimination_analysis.elimination_rate}%</div>
+                                <div class="elimination-stat-label">Tasa de Eliminación</div>
+                            </div>
+                        </div>
+                        <div class="reasons-list">
+                `;
+                
+                // Encontrar el porcentaje máximo para normalizar las barras
+                const maxPercentage = Math.max(...Object.values(data.elimination_analysis.top_reasons).map(r => r.percentage));
+                
+                // Ordenar razones por count descendente
+                const sortedReasons = Object.entries(data.elimination_analysis.top_reasons)
+                    .sort((a, b) => b[1].count - a[1].count)
+                    .slice(0, 10);
+                
+                sortedReasons.forEach(([reason, stats]) => {
+                    const barWidth = (stats.percentage / maxPercentage) * 100;
+                    eliminationHtml += `
+                        <div class="reason-item">
+                            <div class="reason-text">${reason}</div>
+                            <div class="reason-stats">
+                                <div class="reason-count">${stats.count} acciones</div>
+                                <div class="reason-percentage">${stats.percentage}%</div>
+                            </div>
+                            <div class="reason-bar">
+                                <div class="reason-bar-fill" style="width: ${barWidth}%"></div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                eliminationHtml += '</div></div>';
+            }
+            
+            topPicksHtml += eliminationHtml;
             
             // Footer con última actualización
             const updateTime = new Date(data.timestamp).toLocaleString('es-ES');
