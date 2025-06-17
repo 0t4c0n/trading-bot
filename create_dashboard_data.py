@@ -73,7 +73,7 @@ def create_dashboard_data():
             "market_trends": {},
             "filter_criteria": {
                 "volume_50d_min": "300,000",
-                "price_vs_ma50": "0% a +5%",
+                "price_vs_ma50": "0% a +6%",
                 "ma200_trend": "Positiva",
                 "last_day": "Positivo",
                 "earnings": "Positivos último trimestre",
