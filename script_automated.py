@@ -229,9 +229,9 @@ class USStockMovingAveragesExtractor:
                         revenue_growth_positive = revenue_growth > 0.15
                     
                     # Crecimiento de beneficios > 25%
-                    earnings_growth = ticker_info.get('earningsGrowthYOY')
+                    earnings_growth = ticker_info.get('earningsGrowth')
                     if earnings_growth is not None:
-                        earnings_growth_positive = earnings_growth > 0.25
+                        earnings_growth_positive = earnings_growth > 0.20
                     
                     # CRITERIO OR: Cualquiera de los dos debe cumplirse
                     if revenue_growth_positive is not None or earnings_growth_positive is not None:
@@ -288,14 +288,14 @@ class USStockMovingAveragesExtractor:
                 passes_filters = False
                 filter_reasons.append(f"Vol 50d bajo: {int(volume_50d_avg)}")
             
-            # Filtro 2: Entre 0% y 5% por encima de MA50
+            # Filtro 2: Entre 0% y 6% por encima de MA50
             if price_vs_ma50_pct == None:
                 passes_filters = False
                 filter_reasons.append("Sin datos MA50")
             elif price_vs_ma50_pct < 0:
                 passes_filters = False
                 filter_reasons.append(f"Debajo MA50: {price_vs_ma50_pct:.1f}%")
-            elif price_vs_ma50_pct > 5:
+            elif price_vs_ma50_pct > 6:
                 passes_filters = False
                 filter_reasons.append(f"Muy arriba MA50: +{price_vs_ma50_pct:.1f}%")
             
