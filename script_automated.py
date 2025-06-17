@@ -15,17 +15,12 @@ class USStockMovingAveragesExtractor:
         all_symbols = []
         
         try:
-            print("Obteniendo símbolos del NYSE...")
             nyse_symbols = self.get_exchange_symbols('NYSE')
-            print(f"✓ NYSE: {len(nyse_symbols)} símbolos obtenidos")
-            
-            print("Obteniendo símbolos del NASDAQ...")
             nasdaq_symbols = self.get_exchange_symbols('NASDAQ')
-            print(f"✓ NASDAQ: {len(nasdaq_symbols)} símbolos obtenidos")
             
             # Combinar y eliminar duplicados
             all_symbols = list(set(nyse_symbols + nasdaq_symbols))
-            print(f"✓ Total combinado (sin duplicados): {len(all_symbols)} símbolos")
+            print(f"✓ NYSE: {len(nyse_symbols)} | NASDAQ: {len(nasdaq_symbols)} | Total: {len(all_symbols)} símbolos")
             
             return all_symbols
             
@@ -97,30 +92,43 @@ class USStockMovingAveragesExtractor:
         return all_backup
     
     def calculate_spy_return_20d(self):
-        """Calcula el rendimiento de SPY en 20 días - SOLO UNA VEZ"""
-        print("🔍 Descargando datos de SPY para análisis de Relative Strength...")
+        """Calcula el rendimiento de SPY en 20 días - SOLO UNA VEZ CON RETRY"""
+        print("Descargando SPY para Relative Strength...")
         
-        try:
-            spy_ticker = yf.Ticker("SPY")
-            spy_data = spy_ticker.history(period="2mo")
-            
-            if spy_data.empty or len(spy_data) < 21:
-                print("⚠️ SPY: Datos insuficientes - Relative Strength deshabilitado")
-                return None
-            else:
-                spy_current = spy_data['Close'].iloc[-1]
-                spy_20d_ago = spy_data['Close'].iloc[-21]
-                spy_return_20d = ((spy_current / spy_20d_ago) - 1) * 100
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                spy_ticker = yf.Ticker("SPY")
+                spy_data = spy_ticker.history(period="2mo")
                 
-                print(f"✅ SPY: {len(spy_data)} días descargados")
-                print(f"✅ SPY rendimiento 20 días: {spy_return_20d:+.2f}%")
-                print(f"💡 Valor SPY reutilizado en todos los lotes")
+                if spy_data.empty or len(spy_data) < 21:
+                    print("⚠️ SPY: Datos insuficientes - Relative Strength deshabilitado")
+                    return None
+                else:
+                    spy_current = spy_data['Close'].iloc[-1]
+                    spy_20d_ago = spy_data['Close'].iloc[-21]
+                    spy_return_20d = ((spy_current / spy_20d_ago) - 1) * 100
+                    
+                    print(f"✅ SPY rendimiento 20d: {spy_return_20d:+.2f}%")
+                    return spy_return_20d
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
                 
-                return spy_return_20d
-                
-        except Exception as e:
-            print(f"⚠️ Error descargando SPY: {e} - Relative Strength deshabilitado")
-            return None
+                if "rate" in error_msg or "429" in error_msg or "too many requests" in error_msg:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 5 * (2 ** retry_count)
+                        print(f"⏳ SPY Rate limit - Retry {retry_count}/{max_retries} en {wait_time}s")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"❌ SPY: Rate limit persistente")
+                        return None
+                else:
+                    print(f"⚠️ Error SPY: {e}")
+                    return None
     
     def calculate_moving_averages(self, df):
         """Calcula las medias móviles de 10, 21, 50 y 200 días"""
@@ -383,69 +391,92 @@ class USStockMovingAveragesExtractor:
             return {'ma_trend': 'Error en cálculo', 'passes_filters': False, 'filter_reasons': ['Error de cálculo']}
     
     def get_stock_data_with_ma(self, symbols, spy_return_20d=None, period="1y"):
-        """Obtiene datos y calcula medias móviles usando SPY pre-calculado"""
+        """Obtiene datos y calcula medias móviles usando SPY pre-calculado - CON RATE LIMITING"""
         stock_data = {}
         failed_symbols = []
         
-        print(f"📊 Procesando {len(symbols)} acciones con SPY pre-calculado...")
-        if spy_return_20d is not None:
-            print(f"🎯 Usando SPY return: {spy_return_20d:+.2f}% (calculado una sola vez)")
-        else:
-            print(f"⚠️ SPY return no disponible - Relative Strength deshabilitado")
-        
         for i, symbol in enumerate(symbols):
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period=period)
-                
-                if not hist.empty and len(hist) >= 10:
-                    hist_with_ma = self.calculate_moving_averages(hist)
+            # Retry logic para manejar rate limiting
+            max_retries = 3
+            retry_count = 0
+            success = False
+            
+            while retry_count < max_retries and not success:
+                try:
+                    ticker = yf.Ticker(symbol)
+                    hist = ticker.history(period=period)
                     
-                    try:
-                        ticker_info = ticker.info
-                        company_info = {
-                            'name': ticker_info.get('longName', 'N/A'),
-                            'sector': ticker_info.get('sector', 'N/A'),
-                            'industry': ticker_info.get('industry', 'N/A'),
-                            'market_cap': ticker_info.get('marketCap', 'N/A')
+                    if not hist.empty and len(hist) >= 10:
+                        hist_with_ma = self.calculate_moving_averages(hist)
+                        
+                        try:
+                            ticker_info = ticker.info
+                            company_info = {
+                                'name': ticker_info.get('longName', 'N/A'),
+                                'sector': ticker_info.get('sector', 'N/A'),
+                                'industry': ticker_info.get('industry', 'N/A'),
+                                'market_cap': ticker_info.get('marketCap', 'N/A')
+                            }
+                        except Exception as info_error:
+                            if "rate" in str(info_error).lower() or "429" in str(info_error):
+                                time.sleep(2 ** retry_count)
+                                retry_count += 1
+                                continue
+                            else:
+                                ticker_info = {}
+                                company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
+                        
+                        ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_return_20d)
+                        
+                        stock_data[symbol] = {
+                            'data': hist_with_ma,
+                            'ma_status': ma_status,
+                            'info': company_info
                         }
-                    except:
-                        ticker_info = {}
-                        company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
-                    
-                    # Pasar el SPY return pre-calculado
-                    ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_return_20d)
-                    
-                    stock_data[symbol] = {
-                        'data': hist_with_ma,
-                        'ma_status': ma_status,
-                        'info': company_info
-                    }
-                    
-                    filter_status = "✅ PASA" if ma_status['passes_filters'] else "❌ FILTRADO"
-                    price = ma_status.get('current_price', 0)
-                    rel_strength = ma_status.get('relative_strength_value', 0)
-                    rel_str = f"SPY{rel_strength:+.1f}%" if rel_strength else "SPY:N/A"
-                    
-                    # Mostrar razón de filtrado si no pasa
-                    if ma_status['passes_filters']:
-                        reason_str = ""
+                        
+                        filter_status = "✅ PASA" if ma_status['passes_filters'] else "❌ FILTRADO"
+                        price = ma_status.get('current_price', 0)
+                        rel_strength = ma_status.get('relative_strength_value', 0)
+                        rel_str = f"SPY{rel_strength:+.1f}%" if rel_strength else "SPY:N/A"
+                        
+                        # Mostrar razón de filtrado si no pasa
+                        if ma_status['passes_filters']:
+                            reason_str = ""
+                        else:
+                            reasons = ma_status.get('filter_reasons', ['Sin razón'])
+                            first_reason = reasons[0] if reasons else 'Sin razón'
+                            reason_str = f" - [{first_reason}]"
+                        
+                        retry_info = f" (retry {retry_count})" if retry_count > 0 else ""
+                        print(f"{filter_status} {symbol} - ${price:.2f} - {rel_str}{reason_str}{retry_info} - {i+1}/{len(symbols)}")
+                        success = True
+                        
                     else:
-                        reasons = ma_status.get('filter_reasons', ['Sin razón'])
-                        first_reason = reasons[0] if reasons else 'Sin razón'
-                        reason_str = f" - [{first_reason}]"
+                        failed_symbols.append(symbol)
+                        print(f"✗ {symbol} - Datos insuficientes")
+                        success = True
                     
-                    print(f"{filter_status} {symbol} - ${price:.2f} - {rel_str}{reason_str} - {i+1}/{len(symbols)}")
-                else:
-                    failed_symbols.append(symbol)
-                    print(f"✗ {symbol} - Datos insuficientes")
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    
+                    if "rate" in error_msg or "429" in error_msg or "too many requests" in error_msg:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = 2 ** retry_count
+                            print(f"⏳ {symbol} - Rate limit - Retry {retry_count}/{max_retries} en {wait_time}s")
+                            time.sleep(wait_time)
+                        else:
+                            failed_symbols.append(symbol)
+                            print(f"❌ {symbol} - Rate limit persistente")
+                            break
+                    else:
+                        failed_symbols.append(symbol)
+                        print(f"✗ {symbol} - Error: {e}")
+                        break
                 
-                time.sleep(0.1)
-                
-            except Exception as e:
-                failed_symbols.append(symbol)
-                print(f"✗ {symbol} - Error: {e}")
-                
+                if success or retry_count >= max_retries:
+                    time.sleep(0.2)  # Ajustado a 0.2s
+                    
         return stock_data, failed_symbols
     
     def save_ma_data(self, stock_data, filename_prefix="us_stocks_filtered_moving_averages"):
@@ -505,14 +536,13 @@ class USStockMovingAveragesExtractor:
         all_df = pd.DataFrame(all_data)
         all_filename = f"{filename_prefix}_ALL_DATA_{timestamp}.csv"
         all_df.to_csv(all_filename, index=False)
-        print(f"✓ Todos los datos guardados: {all_filename}")
+        print(f"✓ Guardado: {all_filename}")
         
         if filtered_data:
             filtered_df = pd.DataFrame(filtered_data)
             filtered_filename = f"{filename_prefix}_FILTERED_ONLY_{timestamp}.csv"
             filtered_df.to_csv(filtered_filename, index=False)
-            print(f"✓ Datos filtrados guardados: {filtered_filename}")
-            print(f"📊 Acciones que PASAN filtros: {len(filtered_df)}/{len(all_df)}")
+            print(f"✓ Guardado: {filtered_filename}")
         else:
             print("❌ Ninguna acción pasó todos los filtros")
             filtered_df = pd.DataFrame()
@@ -520,69 +550,81 @@ class USStockMovingAveragesExtractor:
         return all_df, filtered_df
 
 def main():
-    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS OPTIMIZADO"""
-    print("=== TRADING BOT AUTOMATIZADO - 8 FILTROS OPTIMIZADO ===")
+    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS OPTIMIZADO + RATE LIMITING"""
+    print("=== TRADING BOT AUTOMATIZADO - 8 FILTROS ===")
     
     extractor = USStockMovingAveragesExtractor()
     
-    print("1. Obteniendo TODOS los símbolos NYSE + NASDAQ...")
+    print("Obteniendo símbolos NYSE + NASDAQ...")
     all_symbols = extractor.get_nyse_nasdaq_symbols()
     
     if not all_symbols:
         print("❌ No se pudieron obtener símbolos")
         exit(1)
     
-    # PASO CLAVE: Calcular SPY return solo UNA VEZ al inicio
-    print("\n🎯 OPTIMIZACIÓN: Calculando SPY return solo una vez...")
+    # Calcular SPY return solo UNA VEZ al inicio
     spy_return_20d = extractor.calculate_spy_return_20d()
     
-    # ANÁLISIS COMPLETO - TODAS las acciones
+    # Procesar acciones
     symbols_to_process = all_symbols
-    print(f"\n🚀 Procesando {len(symbols_to_process)} acciones completas (NYSE + NASDAQ)...")
-    print("⚠️  Duración estimada: 40-80 minutos")
-    print("🔥 OPTIMIZADO: SPY calculado solo una vez y reutilizado en todos los lotes")
+    print(f"\nProcesando {len(symbols_to_process)} acciones...")
     
-    # Dividir en lotes para mejor manejo
-    batch_size = 100
+    # Dividir en lotes
+    batch_size = 50  # Ajustado a 50
     total_batches = (len(symbols_to_process) + batch_size - 1) // batch_size
     
     all_stock_data = {}
     all_failed = []
-    
-    print(f"\n📦 Procesando en {total_batches} lotes de {batch_size} acciones...")
     
     for batch_num in range(total_batches):
         start_idx = batch_num * batch_size
         end_idx = min(start_idx + batch_size, len(symbols_to_process))
         batch_symbols = symbols_to_process[start_idx:end_idx]
         
-        print(f"\n=== LOTE {batch_num + 1}/{total_batches} ===")
-        print(f"Procesando acciones {start_idx + 1}-{end_idx} de {len(symbols_to_process)}")
+        print(f"\n=== LOTE {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx}) ===")
         
-        # PASAMOS el SPY pre-calculado a cada lote
         batch_data, batch_failed = extractor.get_stock_data_with_ma(batch_symbols, spy_return_20d)
         
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
         
         batch_passed = sum(1 for data in batch_data.values() if data['ma_status']['passes_filters'])
-        print(f"✅ Lote completado: {len(batch_data)} procesadas, {batch_passed} pasan filtros, {len(batch_failed)} fallidas")
+        print(f"Lote completado: {len(batch_data)} procesadas, {batch_passed} pasan filtros, {len(batch_failed)} errores")
         
         if batch_num < total_batches - 1:
-            print("⏳ Pausa de 5 segundos entre lotes...")
-            time.sleep(5)
+            print("Pausa 15s...")
+            time.sleep(15)  # 15s entre lotes
+    
+    # Resultados finales
+    print(f"\n=== RESUMEN FINAL ===")
+    print(f"Procesadas: {len(all_stock_data)} | Errores: {len(all_failed)}")
+    
+    if all_stock_data:
+        all_summary, filtered_summary = extractor.save_ma_data(all_stock_data)
+        
+        passed_count = len(filtered_summary) if not filtered_summary.empty else 0
+        filter_rate = (passed_count / len(all_stock_data)) * 100 if len(all_stock_data) > 0 else 0
+        
+        print(f"Acciones que PASAN filtros: {passed_count}")
+        print(f"Tasa de éxito: {filter_rate:.1f}%")
+        
+        if spy_return_20d:
+            print(f"SPY 20d: {spy_return_20d:+.2f}%")
+        
+    else:
+        print("❌ No se obtuvieron datos")
+        exit(1)
     
     print(f"\n=== PROCESAMIENTO COMPLETO FINALIZADO ===")
     print(f"📊 Total acciones procesadas exitosamente: {len(all_stock_data)}")
     print(f"❌ Total acciones con errores: {len(all_failed)}")
-    print(f"🚀 SPY return: {spy_return_20d:+.2f}%" if spy_return_20d else "⚠️ SPY no disponible")
+    print(f"🛡️ Rate limiting aplicado: {total_batches} lotes con pausas de 15s")
     
     if all_stock_data:
         print(f"\n3. Guardando resultados completos...")
         all_summary, filtered_summary = extractor.save_ma_data(all_stock_data)
         
         print(f"\n=== RESUMEN FINAL COMPLETO ===")
-        print(f"🌐 Mercados analizados: NYSE + NASDAQ COMPLETOS")
         print(f"✓ Acciones procesadas exitosamente: {len(all_stock_data):,}")
         print(f"✗ Acciones con errores: {len(all_failed):,}")
         print(f"🔍 Acciones que PASAN todos los 8 filtros: {len(filtered_summary) if not filtered_summary.empty else 0}")
@@ -591,18 +633,9 @@ def main():
             filter_rate = (len(filtered_summary) / len(all_stock_data)) * 100
             print(f"📈 Tasa de filtrado exitoso: {filter_rate:.2f}%")
         
-        print(f"\n🎯 8 Filtros aplicados:")
-        print(f"   - Volumen 50d ≥ 300,000")
-        print(f"   - Precio: 0% ≤ vs MA50 ≤ +5%") 
-        print(f"   - Tendencia MA200 positiva")
-        print(f"   - Último día de mercado positivo")
-        print(f"   - Beneficios último trimestre positivos")
-        print(f"   - Volumen último día ≥ +25% vs promedio 50d")
-        print(f"   - 🚀 Crecimiento: Ingresos >+15% OR Beneficios >+25%")
-        print(f"   - 💪 Relative Strength: Outperform SPY +3% (20d)")
-        
     else:
         print("❌ No se pudieron obtener datos de ninguna acción")
+        print("💡 Intenta reducir batch_size o aumentar delays")
         exit(1)
 
 if __name__ == "__main__":
