@@ -1,4 +1,4 @@
-# create_dashboard_data.py - VERSIÓN CORREGIDA CON DEBUG
+# create_dashboard_data.py - VERSIÓN CON ANÁLISIS DE ELIMINACIÓN
 import pandas as pd
 import json
 import glob
@@ -22,7 +22,7 @@ def get_growth_type(row):
 def create_dashboard_data():
     """Convierte los resultados del script en datos JSON para el dashboard"""
     
-    print("=== CREATE DASHBOARD DATA - VERSIÓN CORREGIDA ===")
+    print("=== CREATE DASHBOARD DATA - CON ANÁLISIS DE ELIMINACIÓN ===")
     
     try:
         # Buscar el archivo de datos filtrados más reciente
@@ -78,7 +78,8 @@ def create_dashboard_data():
                 "last_day": "Positivo",
                 "earnings": "Positivos último trimestre",
                 "volume_boost": "+25% vs promedio 50d",
-                "revenue_growth": "🚀 Crecimiento ingresos anuales > +15%"
+                "growth_flexible": "🚀 Ingresos >+15% O Beneficios >+25%",
+                "relative_strength": "💪 Outperform SPY +3% (20d)"
             }
         }
         
@@ -140,7 +141,9 @@ def create_dashboard_data():
                             "last_day_change": round(row['Last_Day_Change_Pct'], 1) if pd.notna(row['Last_Day_Change_Pct']) else 0,
                             "volume_boost": round(vol_ratio_pct, 0),
                             "trend": row['MA_Trend'] if pd.notna(row['MA_Trend']) else 'N/A',
-                            "volume_50d_millions": round(row['Volume_50d_Avg'] / 1000000, 1) if pd.notna(row['Volume_50d_Avg']) else 0
+                            "volume_50d_millions": round(row['Volume_50d_Avg'] / 1000000, 1) if pd.notna(row['Volume_50d_Avg']) else 0,
+                            "relative_strength": round(row['Relative_Strength_Value'], 1) if pd.notna(row['Relative_Strength_Value']) else 0,
+                            "growth_type": get_growth_type(row)
                         },
                         "ma_levels": {
                             "ma_10": round(row['MA_10'], 2) if pd.notna(row['MA_10']) else 0,
@@ -165,6 +168,35 @@ def create_dashboard_data():
                 print(f"⚠️ Error procesando acciones filtradas: {e}")
                 print("Continuando con dashboard básico...")
         
+        # AÑADIR ANÁLISIS DE RAZONES DE ELIMINACIÓN
+        dashboard_data["elimination_analysis"] = {
+            "total_eliminated": len(all_df) - len(filtered_df),
+            "elimination_rate": round(((len(all_df) - len(filtered_df)) / len(all_df) * 100), 1) if len(all_df) > 0 else 0,
+            "top_reasons": {}
+        }
+        
+        if len(all_df) > len(filtered_df):  # Si hay acciones eliminadas
+            filter_reasons_count = {}
+            total_stocks = len(all_df)
+            
+            for _, row in all_df.iterrows():
+                if not row['Passes_Filters']:
+                    reasons = str(row['Filter_Reasons']).split(';')
+                    for reason in reasons:
+                        reason = reason.strip()
+                        if reason and reason != "✅ PASA TODOS LOS FILTROS" and reason != "nan":
+                            filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
+            
+            # Top 10 razones para el dashboard
+            for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
+                percentage = round((count / total_stocks) * 100, 1)
+                dashboard_data["elimination_analysis"]["top_reasons"][reason] = {
+                    "count": count,
+                    "percentage": percentage
+                }
+            
+            print(f"✓ Análisis de eliminación: {len(filter_reasons_count)} razones diferentes")
+        
         # Estadísticas adicionales
         if filtered_df.empty:
             dashboard_data["statistics"] = {
@@ -187,6 +219,7 @@ def create_dashboard_data():
                     "avg_volume_ratio": round(filtered_df['Volume_Ratio_vs_50d'].mean(), 2),
                     "avg_price_vs_ma50": round(filtered_df['Price_vs_MA50_Pct'].mean(), 1),
                     "avg_last_day_change": round(filtered_df['Last_Day_Change_Pct'].mean(), 1),
+                    "avg_relative_strength": round(filtered_df['Relative_Strength_Value'].mean(), 1) if 'Relative_Strength_Value' in filtered_df.columns else 0,
                     "price_range_vs_ma50": {
                         "min": round(filtered_df['Price_vs_MA50_Pct'].min(), 1),
                         "max": round(filtered_df['Price_vs_MA50_Pct'].max(), 1)
@@ -221,6 +254,8 @@ def create_dashboard_data():
                 print(f"   - Total analizadas: {dashboard_data['summary']['total_analyzed']}")
                 print(f"   - Acciones filtradas: {dashboard_data['summary']['passed_filters']}")
                 print(f"   - Top picks: {len(dashboard_data['top_picks'])}")
+                print(f"   - Acciones eliminadas: {dashboard_data['elimination_analysis']['total_eliminated']}")
+                print(f"   - Razones de eliminación: {len(dashboard_data['elimination_analysis']['top_reasons'])}")
                 
             else:
                 print("❌ El archivo no se pudo verificar")
@@ -238,7 +273,7 @@ def create_dashboard_data():
         except Exception as e:
             print(f"⚠️ Error creando last_update.txt: {e}")
         
-        print(f"🎉 Dashboard completamente generado!")
+        print(f"🎉 Dashboard completamente generado con análisis de eliminación!")
         return True
         
     except Exception as e:
