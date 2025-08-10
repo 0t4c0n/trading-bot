@@ -5,11 +5,13 @@ import time
 from datetime import datetime, timedelta
 import json
 from io import StringIO
+import os
+import numpy as np
 
-class USStockMovingAveragesExtractor:
+class MinerviniStockScreener:
     def __init__(self):
         self.stock_symbols = []
-        
+
     def get_nyse_nasdaq_symbols(self):
         """Obtiene símbolos de NYSE y NASDAQ combinados"""
         all_symbols = []
@@ -18,11 +20,8 @@ class USStockMovingAveragesExtractor:
             nyse_symbols = self.get_exchange_symbols('NYSE')
             nasdaq_symbols = self.get_exchange_symbols('NASDAQ')
             
-            # Combinar y eliminar duplicados
-            all_symbols = list(set(nyse_symbols + nasdaq_symbols))
-            print(f"✓ NYSE: {len(nyse_symbols)} | NASDAQ: {len(nasdaq_symbols)} | Total: {len(all_symbols)} símbolos")
-            
-            return all_symbols
+            # Combinar y eliminar duplicados ya se hace en el flujo principal
+            return list(set(nyse_symbols + nasdaq_symbols))
             
         except Exception as e:
             print(f"Error obteniendo símbolos: {e}")
@@ -49,7 +48,12 @@ class USStockMovingAveragesExtractor:
             if response.status_code == 200:
                 data = response.json()
                 if 'data' in data and 'table' in data['data']:
-                    symbols = [row['symbol'] for row in data['data']['table']['rows']]
+                    rows = data['data']['table']['rows']
+                    # La API ya no devuelve 'assetType', asumimos que todos son stocks.
+                    # El filtro secundario en main() limpiará los tickers no deseados.
+                    symbols = [row['symbol'] for row in rows]
+                    
+                    print(f"  Obtenidos {len(symbols)} símbolos de {exchange}.")
                     return symbols
             
             return []
@@ -91,51 +95,11 @@ class USStockMovingAveragesExtractor:
         all_backup = list(set(nyse_major + nasdaq_major))
         return all_backup
     
-    def calculate_spy_return_20d(self):
-        """Calcula el rendimiento de SPY en 20 días - SOLO UNA VEZ CON RETRY"""
-        print("Descargando SPY para Relative Strength...")
-        
-        max_retries = 5
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                spy_ticker = yf.Ticker("SPY")
-                spy_data = spy_ticker.history(period="2mo")
-                
-                if spy_data.empty or len(spy_data) < 21:
-                    print("⚠️ SPY: Datos insuficientes - Relative Strength deshabilitado")
-                    return None
-                else:
-                    spy_current = spy_data['Close'].iloc[-1]
-                    spy_20d_ago = spy_data['Close'].iloc[-21]
-                    spy_return_20d = ((spy_current / spy_20d_ago) - 1) * 100
-                    
-                    print(f"✅ SPY rendimiento 20d: {spy_return_20d:+.2f}%")
-                    return spy_return_20d
-                    
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                if "rate" in error_msg or "429" in error_msg or "too many requests" in error_msg:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        wait_time = 5 * (2 ** retry_count)
-                        print(f"⏳ SPY Rate limit - Retry {retry_count}/{max_retries} en {wait_time}s")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"❌ SPY: Rate limit persistente")
-                        return None
-                else:
-                    print(f"⚠️ Error SPY: {e}")
-                    return None
-    
     def calculate_moving_averages(self, df):
-        """Calcula las medias móviles de 10, 21, 50 y 200 días"""
+        """Calcula las medias móviles de 50, 150 y 200 días (Minervini)"""
         try:
-            df['MA_10'] = df['Close'].rolling(window=10).mean()
-            df['MA_21'] = df['Close'].rolling(window=21).mean() 
             df['MA_50'] = df['Close'].rolling(window=50).mean()
+            df['MA_150'] = df['Close'].rolling(window=150).mean()
             df['MA_200'] = df['Close'].rolling(window=200).mean()
             
             return df
@@ -143,273 +107,443 @@ class USStockMovingAveragesExtractor:
             print(f"Error calculando medias móviles: {e}")
             return df
     
-    def get_current_ma_status(self, df, ticker_info=None, spy_return_20d=None):
-        """Obtiene el estado actual de las medias móviles y métricas de filtrado"""
+    def calculate_52_week_range(self, df):
+        """Calcula máximo y mínimo de 52 semanas"""
         try:
-            if df.empty or len(df) < 200:
-                return {
-                    'current_price': None,
-                    'ma_10': None, 'ma_21': None, 'ma_50': None, 'ma_200': None,
-                    'above_ma_10': None, 'above_ma_21': None, 'above_ma_50': None, 'above_ma_200': None,
-                    'ma_trend': 'Insuficientes datos',
-                    'volume_50d_avg': None, 'last_day_volume': None, 'volume_ratio_vs_50d': None,
-                    'volume_above_25pct': None, 'price_vs_ma50_pct': None, 'ma200_trend_positive': None,
-                    'last_day_positive': None, 'quarterly_earnings_positive': None,
-                    'revenue_growth_positive': None, 'earnings_growth_positive': None, 'growth_criteria_met': None,
-                    'relative_strength_vs_spy': None, 'relative_strength_value': None,
-                    'passes_filters': False, 'filter_reasons': ['Datos insuficientes']
-                }
+            weeks_52 = 252  # ~52 semanas de trading
             
-            latest = df.iloc[-1]
-            previous = df.iloc[-2] if len(df) >= 2 else None
-            current_price = latest['Close']
+            recent_data = df.tail(weeks_52)
+            high_52w = recent_data['High'].max()
+            low_52w = recent_data['Low'].min()
             
-            # Medias móviles
-            ma_10 = latest['MA_10']
-            ma_21 = latest['MA_21'] 
-            ma_50 = latest['MA_50']
-            ma_200 = latest['MA_200']
+            return high_52w, low_52w
+        except Exception as e:
+            print(f"Error calculando 52-week range: {e}")
+            return None, None
+    
+    def analyze_vcp_characteristics(self, df, high_52w, volume_50d_avg):
+        """Análisis multifactorial de VCP (Volatility Contraction Pattern)"""
+        try:
+            if len(df) < 60 or not high_52w or not volume_50d_avg:
+                return {'vcp_detected': False, 'details': ['Datos insuficientes']}
+
+            current_price = df['Close'].iloc[-1]
             
-            # Filtro 1: Volumen promedio últimos 50 días
-            volume_50d_avg = df['Volume'].tail(50).mean() if len(df) >= 50 else None
+            # 1. CONTEXTO: Cerca del máximo de 52 semanas
+            price_near_high = (high_52w - current_price) / high_52w <= 0.15  # Dentro del 15% del máximo
+            if not price_near_high:
+                return {'vcp_detected': False, 'details': ['No está cerca del máximo 52w']}
+
+            # 2. CONTRACCIÓN DE VOLATILIDAD: Rango de precios se estrecha
+            # Volatilidad en los últimos 10 días vs los últimos 50 días
+            vol_10d = (df['High'].tail(10).max() - df['Low'].tail(10).min()) / df['Close'].tail(10).mean()
+            vol_50d = (df['High'].tail(50).max() - df['Low'].tail(50).min()) / df['Close'].tail(50).mean()
             
-            # Filtro 2: Volumen último día vs promedio 50 días
-            last_day_volume = latest['Volume']
-            volume_ratio_vs_50d = None
-            volume_above_25pct = None
-            if volume_50d_avg and volume_50d_avg > 0:
-                volume_ratio_vs_50d = (last_day_volume / volume_50d_avg)
-                volume_above_25pct = volume_ratio_vs_50d >= 1.25
+            volatility_tightening = vol_10d < (vol_50d * 0.6) # La volatilidad reciente es <60% de la anterior
             
-            # Filtro 3: Porcentaje respecto a MA50
-            price_vs_ma50_pct = None
-            if pd.notna(ma_50) and ma_50 > 0:
-                price_vs_ma50_pct = ((current_price - ma_50) / ma_50) * 100
+            # 3. SEQUÍA DE VOLUMEN: El volumen disminuye en la contracción final
+            volume_10d_avg = df['Volume'].tail(10).mean()
+            volume_dry_up = volume_10d_avg < (volume_50d_avg * 0.7) # Volumen reciente <70% de la media
             
-            # Filtro 4: Tendencia de MA200
-            ma200_trend_positive = None
-            if len(df) >= 220 and pd.notna(df['MA_200'].iloc[-1]) and pd.notna(df['MA_200'].iloc[-11]):
-                ma200_recent = df['MA_200'].tail(10).mean()
-                ma200_previous = df['MA_200'].iloc[-20:-10].mean()
-                ma200_trend_positive = ma200_recent > ma200_previous
+            # 4. "CHEAT" PIVOT: El precio se mueve lateralmente en un rango muy estrecho
+            price_range_5d = (df['High'].tail(5).max() - df['Low'].tail(5).min()) / current_price
+            is_in_pivot = price_range_5d < 0.03 # Rango de menos del 3% en los últimos 5 días
+
+            # SCORING: Se considera VCP si hay contracción de volatilidad Y sequía de volumen
+            vcp_detected = volatility_tightening and volume_dry_up
             
-            # Filtro 5: Último día positivo
-            last_day_positive = None
-            last_day_change_pct = None
-            if previous is not None:
-                last_day_change_pct = ((current_price - previous['Close']) / previous['Close']) * 100
-                last_day_positive = last_day_change_pct > 0
-            
-            # Filtro 6: Beneficios último trimestre
-            quarterly_earnings_positive = None
-            if ticker_info:
-                try:
-                    quarterly_earnings = ticker_info.get('quarterlyEarningsGrowthYOY')
-                    if quarterly_earnings is not None:
-                        quarterly_earnings_positive = quarterly_earnings > 0
-                    else:
-                        net_income = ticker_info.get('netIncomeToCommon')
-                        if net_income is not None:
-                            quarterly_earnings_positive = net_income > 0
-                        else:
-                            quarterly_earnings_positive = None
-                except:
-                    quarterly_earnings_positive = None
-            
-            # FILTRO 7: CRECIMIENTO FLEXIBLE (Ingresos >15% OR Beneficios >25%)
-            revenue_growth_positive = None
-            earnings_growth_positive = None
-            growth_criteria_met = None
-            
-            if ticker_info:
-                try:
-                    # Crecimiento de ingresos > 15%
-                    revenue_growth = ticker_info.get('revenueGrowth')
-                    if revenue_growth is not None:
-                        revenue_growth_positive = revenue_growth > 0.15
-                    
-                    # Crecimiento de beneficios > 25%
-                    earnings_growth = ticker_info.get('earningsGrowth')
-                    if earnings_growth is not None:
-                        earnings_growth_positive = earnings_growth > 0.20
-                    
-                    # CRITERIO OR: Cualquiera de los dos debe cumplirse
-                    if revenue_growth_positive is not None or earnings_growth_positive is not None:
-                        growth_criteria_met = (revenue_growth_positive == True) or (earnings_growth_positive == True)
-                    else:
-                        growth_criteria_met = None
-                        
-                except:
-                    revenue_growth_positive = None
-                    earnings_growth_positive = None
-                    growth_criteria_met = None
-            
-            # FILTRO 8: RELATIVE STRENGTH VS SPY (+3% outperformance en 20 días)
-            relative_strength_vs_spy = None
-            relative_strength_value = None
-            
-            if spy_return_20d is not None and len(df) >= 21:
-                try:
-                    # Calcular rendimiento de la acción últimos 20 días
-                    stock_return = ((current_price / df['Close'].iloc[-21]) - 1) * 100
-                    
-                    # Comparar con rendimiento de SPY pre-calculado
-                    relative_strength_value = stock_return - spy_return_20d
-                    relative_strength_vs_spy = relative_strength_value > 3.0  # 3% mejor que SPY
-                    
-                except Exception as e:
-                    relative_strength_vs_spy = None
-                    relative_strength_value = None
-            
-            # Análisis de tendencia general
-            if pd.notna(ma_10) and pd.notna(ma_21) and pd.notna(ma_50) and pd.notna(ma_200):
-                if ma_10 > ma_21 > ma_50 > ma_200:
-                    trend = "Alcista fuerte"
-                elif ma_10 > ma_21 > ma_50:
-                    trend = "Alcista"
-                elif ma_10 < ma_21 < ma_50 < ma_200:
-                    trend = "Bajista fuerte" 
-                elif ma_10 < ma_21 < ma_50:
-                    trend = "Bajista"
-                else:
-                    trend = "Lateral/Mixta"
-            else:
-                trend = "Datos insuficientes"
-            
-            # APLICAR LOS 8 FILTROS
-            passes_filters = True
-            filter_reasons = []
-            
-            # Filtro 1: Volumen promedio mínimo 300,000
-            if volume_50d_avg == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos vol 50d")
-            elif volume_50d_avg < 300000:
-                passes_filters = False
-                filter_reasons.append(f"Vol 50d bajo: {int(volume_50d_avg)}")
-            
-            # Filtro 2: Entre 0% y 6% por encima de MA50
-            if price_vs_ma50_pct == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos MA50")
-            elif price_vs_ma50_pct < 0:
-                passes_filters = False
-                filter_reasons.append(f"Debajo MA50: {price_vs_ma50_pct:.1f}%")
-            elif price_vs_ma50_pct > 6:
-                passes_filters = False
-                filter_reasons.append(f"Muy arriba MA50: +{price_vs_ma50_pct:.1f}%")
-            
-            # Filtro 3: Tendencia MA200 debe ser positiva
-            if ma200_trend_positive == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos MA200 trend")
-            elif ma200_trend_positive == False:
-                passes_filters = False
-                filter_reasons.append("MA200 tendencia negativa")
-            
-            # Filtro 4: Último día debe ser positivo
-            if last_day_positive == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos último día")
-            elif last_day_positive == False:
-                passes_filters = False
-                filter_reasons.append("Último día negativo")
-            
-            # Filtro 5: Beneficios último trimestre positivos
-            if quarterly_earnings_positive == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos earnings")
-            elif quarterly_earnings_positive == False:
-                passes_filters = False
-                filter_reasons.append("Beneficios Q negativos")
-            
-            # Filtro 6: Volumen último día debe ser 25% superior al promedio 50d
-            if volume_above_25pct == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos vol ratio")
-            elif volume_above_25pct == False:
-                passes_filters = False
-                vol_pct = ((volume_ratio_vs_50d - 1) * 100) if volume_ratio_vs_50d else 0
-                filter_reasons.append(f"Vol insuficiente: {vol_pct:+.0f}% vs 50d")
-            
-            # Filtro 7: CRECIMIENTO FLEXIBLE (Ingresos >15% OR Beneficios >25%)
-            if growth_criteria_met == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos growth")
-            elif growth_criteria_met == False:
-                rev_status = f"Ingresos:{revenue_growth*100:.1f}%" if revenue_growth_positive is not None else "Ingresos:N/A"
-                earn_status = f"Beneficios:{earnings_growth*100:.1f}%" if earnings_growth_positive is not None else "Beneficios:N/A"
-                passes_filters = False
-                filter_reasons.append(f"Growth insuficiente ({rev_status}, {earn_status})")
-            
-            # Filtro 8: RELATIVE STRENGTH VS SPY (+3% outperformance)
-            if relative_strength_vs_spy == None:
-                passes_filters = False
-                filter_reasons.append("Sin datos SPY comparison")
-            elif relative_strength_vs_spy == False:
-                passes_filters = False
-                if relative_strength_value is not None:
-                    filter_reasons.append(f"Underperform SPY: {relative_strength_value:+.1f}%")
-                else:
-                    filter_reasons.append("Underperform SPY")
-            
-            # Solo si pasa TODOS los filtros
-            if passes_filters:
-                filter_reasons = ["✅ PASA TODOS LOS FILTROS"]
-            
+            details = []
+            if volatility_tightening: details.append(f"Volatilidad contraída (10d: {vol_10d:.2%}, 50d: {vol_50d:.2%})")
+            if volume_dry_up: details.append(f"Volumen seco (10d avg: {volume_10d_avg/1e6:.2f}M vs 50d: {volume_50d_avg/1e6:.2f}M)")
+            if is_in_pivot: details.append("En zona de pivot (<3% rango)")
+
             return {
-                'current_price': round(current_price, 2),
-                'ma_10': round(ma_10, 2) if pd.notna(ma_10) else None,
-                'ma_21': round(ma_21, 2) if pd.notna(ma_21) else None,
-                'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None,
-                'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None,
-                'above_ma_10': current_price > ma_10 if pd.notna(ma_10) else None,
-                'above_ma_21': current_price > ma_21 if pd.notna(ma_21) else None,
-                'above_ma_50': current_price > ma_50 if pd.notna(ma_50) else None,
-                'above_ma_200': current_price > ma_200 if pd.notna(ma_200) else None,
-                'ma_trend': trend,
-                'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None,
-                'last_day_volume': int(last_day_volume) if last_day_volume else None,
-                'volume_ratio_vs_50d': round(volume_ratio_vs_50d, 2) if volume_ratio_vs_50d else None,
-                'volume_above_25pct': volume_above_25pct,
-                'price_vs_ma50_pct': round(price_vs_ma50_pct, 2) if price_vs_ma50_pct else None,
-                'ma200_trend_positive': ma200_trend_positive,
-                'last_day_positive': last_day_positive,
-                'last_day_change_pct': round(last_day_change_pct, 2) if last_day_change_pct else None,
-                'quarterly_earnings_positive': quarterly_earnings_positive,
-                'revenue_growth_positive': revenue_growth_positive,
-                'earnings_growth_positive': earnings_growth_positive,
-                'growth_criteria_met': growth_criteria_met,
-                'relative_strength_vs_spy': relative_strength_vs_spy,
-                'relative_strength_value': round(relative_strength_value, 2) if relative_strength_value else None,
-                'passes_filters': passes_filters,
-                'filter_reasons': filter_reasons
+                'vcp_detected': vcp_detected,
+                'volatility_tightening': volatility_tightening,
+                'volume_dry_up': volume_dry_up,
+                'is_in_pivot': is_in_pivot,
+                'details': details if details else ["Sin señales claras de VCP"]
             }
             
         except Exception as e:
-            print(f"Error analizando estado de MAs: {e}")
-            return {'ma_trend': 'Error en cálculo', 'passes_filters': False, 'filter_reasons': ['Error de cálculo']}
+            print(f"Error analizando VCP: {e}")
+            return {'vcp_detected': False, 'details': [f'Error: {e}']}
     
-    def get_stock_data_with_ma(self, symbols, spy_return_20d=None, period="1y"):
-        """Obtiene datos y calcula medias móviles usando SPY pre-calculado - CON RATE LIMITING"""
+    def detect_institutional_accumulation(self, df, volume_50d_avg):
+        """Detecta evidencia básica de acumulación institucional"""
+        try:
+            if len(df) < 50:
+                return False
+            
+            recent_data = df.tail(20)  # Últimos 20 días
+            
+            # Criterios de acumulación mejorados:
+            # 1. Volumen promedio reciente > promedio 50d
+            recent_volume_avg = recent_data['Volume'].mean()
+            volume_increase = recent_volume_avg > volume_50d_avg * 1.15  # Aumentado de 1.1 a 1.15
+            
+            # 2. Días con volumen alto coinciden con días alcistas (mejorado)
+            high_volume_days = recent_data[recent_data['Volume'] > volume_50d_avg * 1.5]
+            if len(high_volume_days) > 0:
+                up_days_ratio = len(high_volume_days[high_volume_days['Close'] > high_volume_days['Open']]) / len(high_volume_days)
+            else:
+                up_days_ratio = 0
+            
+            # 3. NUEVO: Volumen en días neutrales (instituciones acumulan sin mover precio)
+            neutral_days = recent_data[abs((recent_data['Close'] / recent_data['Open']) - 1) < 0.01]  # <1% movimiento
+            neutral_volume_high = False
+            if len(neutral_days) > 0:
+                neutral_avg_volume = neutral_days['Volume'].mean()
+                neutral_volume_high = neutral_avg_volume > volume_50d_avg * 1.2
+            
+            # Scoring de acumulación (0-3 puntos)
+            accumulation_score = 0
+            if volume_increase: accumulation_score += 1
+            if up_days_ratio > 0.65: accumulation_score += 1  # Aumentado threshold
+            if neutral_volume_high: accumulation_score += 1
+            
+            return accumulation_score >= 2  # Require 2/3 criterios
+            
+        except Exception as e:
+            print(f"Error detectando acumulación institucional: {e}")
+            return False
+    
+    def hybrid_institutional_evidence(self, symbol, df, ticker_info, volume_50d_avg):
+        """Sistema híbrido mejorado para detectar evidencia institucional real"""
+        try:
+            evidence_score = 0
+            evidence_details = []
+            
+            # 1. ANÁLISIS BÁSICO DE VOLUMEN/PRECIO (0-2 puntos)
+            basic_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg)
+            if basic_accumulation:
+                evidence_score += 2
+                evidence_details.append("Volume accumulation pattern detected")
+            else:
+                evidence_details.append("No clear volume accumulation")
+            
+            # 2. CRITERIOS DE TAMAÑO MINERVINI (0-2 puntos)
+            market_cap = ticker_info.get('marketCap', 0) if ticker_info else 0
+            if market_cap > 0:
+                if 500_000_000 <= market_cap <= 50_000_000_000:  # $500M - $50B sweet spot
+                    evidence_score += 2
+                    evidence_details.append(f"Optimal market cap: ${market_cap/1_000_000_000:.1f}B")
+                elif market_cap >= 100_000_000:  # Mínimo $100M
+                    evidence_score += 1
+                    evidence_details.append(f"Acceptable market cap: ${market_cap/1_000_000_000:.1f}B")
+                else:
+                    evidence_details.append(f"Too small market cap: ${market_cap/1_000_000:.0f}M")
+            else:
+                evidence_details.append("Market cap data unavailable")
+            
+            # 3. ANÁLISIS DE FLOAT INSTITUCIONAL (0-2 puntos)
+            shares_outstanding = ticker_info.get('sharesOutstanding', 0) if ticker_info else 0
+            float_shares = ticker_info.get('floatShares', 0) if ticker_info else 0
+            
+            if shares_outstanding > 0 and float_shares > 0:
+                institutional_ratio = 1 - (float_shares / shares_outstanding)
+                if institutional_ratio > 0.6:  # >60% locked up
+                    evidence_score += 2
+                    evidence_details.append(f"High institutional ownership: {institutional_ratio*100:.1f}%")
+                elif institutional_ratio > 0.4:  # >40% locked up
+                    evidence_score += 1
+                    evidence_details.append(f"Moderate institutional ownership: {institutional_ratio*100:.1f}%")
+                else:
+                    evidence_details.append(f"Low institutional ownership: {institutional_ratio*100:.1f}%")
+            else:
+                evidence_details.append("Float/shares outstanding data unavailable")
+            
+            # 4. LIQUIDEZ INSTITUCIONAL (0-1 punto)
+            current_price = df['Close'].iloc[-1] if not df.empty else 0
+            avg_volume = volume_50d_avg if volume_50d_avg else 0
+            daily_dollar_volume = avg_volume * current_price
+            
+            if daily_dollar_volume > 5_000_000:  # >$5M daily volume
+                evidence_score += 1
+                evidence_details.append(f"Adequate liquidity: ${daily_dollar_volume/1_000_000:.1f}M daily")
+            else:
+                evidence_details.append(f"Low liquidity: ${daily_dollar_volume/1_000_000:.1f}M daily")
+            
+            # 5. CRITERIO DE SHARES OUTSTANDING MINERVINI (0-1 punto)
+            if shares_outstanding > 0:
+                if shares_outstanding < 100_000_000:  # <100M shares (preferencia Minervini)
+                    evidence_score += 1
+                    evidence_details.append(f"Good share count: {shares_outstanding/1_000_000:.0f}M shares")
+                else:
+                    evidence_details.append(f"High share count: {shares_outstanding/1_000_000:.0f}M shares")
+            
+            # SCORING FINAL: Require 5/8 puntos para pasar el filtro
+            passes_institutional = evidence_score >= 5
+            
+            # Para debugging - mostrar detalles solo para stocks que pasan otros filtros
+            if passes_institutional:
+                details_str = " | ".join(evidence_details[:2])  # Mostrar top 2 reasons
+                print(f"    📊 {symbol} Institutional Evidence: {evidence_score}/8 - {details_str}")
+            
+            return passes_institutional, evidence_score, evidence_details
+            
+        except Exception as e:
+            print(f"Error en análisis institucional híbrido para {symbol}: {e}")
+            return False, 0, ["Error in analysis"]
+    
+    def calculate_minervini_score(self, analysis):
+        """Calcula score Minervini (0-100) para ranking"""
+        try:
+            score = 0
+            
+            # 1. Stage Analysis (0-40 points) - PESO PRINCIPAL
+            stage = analysis.get('stage_analysis', '')
+            if 'Stage 2' in stage:
+                score += 40
+            elif 'Stage 1' in stage or 'Stage 3' in stage:
+                score += 20
+            elif 'Stage 4' in stage:
+                score += 0
+            else:
+                score += 10  # Unknown/developing
+            
+            # 2. RS Rating (0-30 points) - SEGUNDO PESO
+            rs_rating = analysis.get('rs_rating', 0)
+            if rs_rating:
+                score += min((rs_rating / 100) * 30, 30)
+            
+            # 3. 52-Week Position (0-20 points)
+            dist_from_high = analysis.get('distance_to_52w_high', 100)
+            dist_from_low = analysis.get('distance_from_52w_low', 0)
+            
+            if dist_from_high is not None and dist_from_low is not None:
+                # Cerca del máximo (0-25% away) = más puntos
+                high_score = max(10 - (dist_from_high / 25) * 10, 0) if dist_from_high <= 25 else 0
+                # Lejos del mínimo (30%+ away) = más puntos  
+                low_score = min((dist_from_low - 30) / 70 * 10, 10) if dist_from_low >= 30 else 0
+                score += high_score + low_score
+            
+            # 4. Technical Patterns & Volume (0-10 points) - BONIFICACIONES
+            if analysis.get('vcp_detected', False):
+                score += 3
+            if analysis.get('institutional_accumulation', False):
+                score += 3
+            if analysis.get('earnings_acceleration', False):
+                score += 2
+            if analysis.get('roe_strong', False):
+                score += 2
+                
+            return min(round(score, 1), 100)
+            
+        except Exception as e:
+            print(f"Error calculando Minervini Score: {e}")
+            return 0
+    
+    def get_minervini_analysis(self, df, rs_rating, ticker_info=None, symbol="UNKNOWN"):
+        """Análisis completo y optimizado con 'early exit' según metodología SEPA de Minervini"""
+        # --- INICIALIZAR DICCIONARIO DE RESULTADOS ---
+        # Esto simplifica el retorno, ya que solo actualizamos los campos necesarios.
+        result = {
+            'current_price': None, 'stage_analysis': 'Unknown', 'passes_all_filters': False,
+            'minervini_score': 0, 'filter_reasons': [], 'rs_rating': rs_rating,
+            'passes_minervini_technical': False, 'passes_minervini_fundamental': False,
+            'ma_50': None, 'ma_150': None, 'ma_200': None, 'high_52w': None, 'low_52w': None,
+            'distance_from_52w_low': None, 'distance_to_52w_high': None, 'vcp_detected': False,
+            'vcp_analysis': {}, 'institutional_accumulation': False, 'institutional_evidence': False,
+            'institutional_score': 0, 'institutional_details': [], 'volume_50d_avg': None,
+            'earnings_acceleration': False, 'roe_strong': False
+        }
+
+        try:
+            result['rs_rating'] = rs_rating
+
+            # --- GUARDIA INICIAL: DATOS INSUFICIENTES ---
+            if df.empty or len(df) < 252:
+                result['stage_analysis'] = 'Insufficient Data'
+                result['filter_reasons'] = ['Datos insuficientes (<252 días)']
+                return result
+            
+            # --- CÁLCULOS BÁSICOS INICIALES ---
+            latest = df.iloc[-1]
+            current_price = latest['Close']
+            ma_50 = latest['MA_50']
+            ma_150 = latest['MA_150'] 
+            ma_200 = latest['MA_200']
+            high_52w, low_52w = self.calculate_52_week_range(df)
+            volume_50d_avg = df['Volume'].tail(50).mean()
+            result['current_price'] = round(current_price, 2)
+
+            # --- EMBUDO DE FILTRADO TÉCNICO (EARLY EXIT) ---
+            def reject_and_return(stage, reason, passes_technical=False):
+                """Función interna para actualizar y devolver el diccionario de resultados en caso de rechazo."""
+                result['stage_analysis'] = stage
+                result['filter_reasons'] = [reason]
+                result['passes_minervini_technical'] = passes_technical
+                analysis_for_scoring = {'stage_analysis': stage, 'rs_rating': rs_rating}
+                result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
+                return result
+
+            # FILTRO 1: TENDENCIA DE LARGO PLAZO (los más importantes y baratos)
+            price_above_long_mas = current_price > ma_150 and current_price > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
+            if not price_above_long_mas:
+                return reject_and_return('Stage 4 (Decline)', "Precio por debajo de MA150 o MA200")
+
+            ma150_above_ma200 = ma_150 > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
+            if not ma150_above_ma200:
+                return reject_and_return('Stage 1/3 (Base/Top)', "MA150 no está por encima de MA200")
+
+            ma200_trending_up = False
+            if pd.notna(ma_200):
+                ma200_22_days_ago = df['MA_200'].iloc[-22]
+                ma200_trending_up = ma_200 > ma200_22_days_ago if pd.notna(ma200_22_days_ago) else False
+            if not ma200_trending_up:
+                return reject_and_return('Stage 1/3 (Base/Top)', "MA200 no tiene tendencia alcista ≥1 mes")
+
+            # FILTRO 2: JERARQUÍA DE MEDIAS MÓVILES
+            ma_hierarchy = (current_price > ma_50 > ma_150 > ma_200) if all(pd.notna(x) for x in [ma_50, ma_150, ma_200]) else False
+            if not ma_hierarchy:
+                return reject_and_return('Stage 2 (Developing)', "Jerarquía MAs incorrecta (Price>MA50>MA150>MA200)")
+
+            # FILTRO 3: POSICIÓN EN RANGO DE 52 SEMANAS
+            if high_52w and low_52w:
+                distance_from_low = ((current_price - low_52w) / low_52w) * 100
+                price_above_30pct_low = distance_from_low >= 30
+            else:
+                return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w")
+            if not price_above_30pct_low:
+                return reject_and_return('Stage 2 (Developing)', f"Precio no está 30%+ sobre mínimo 52w ({distance_from_low:.1f}%)")
+
+            if high_52w:
+                distance_from_high = ((high_52w - current_price) / high_52w) * 100
+                price_near_high = distance_from_high <= 25
+            else:
+                return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w")
+            if not price_near_high:
+                return reject_and_return('Stage 2 (Developing)', f"Precio no está dentro del 25% del máximo 52w ({distance_from_high:.1f}%)")
+
+            # FILTRO 4: FUERZA RELATIVA
+            rs_strong = rs_rating is not None and rs_rating >= 70
+            if not rs_strong:
+                return reject_and_return('Stage 2 (Developing)', f"RS Rating insuficiente (<70): {rs_rating}")
+
+            # FILTRO 5: PATRONES DE PRECIO/VOLUMEN (más caros de calcular)
+            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
+            vcp_detected = vcp_analysis['vcp_detected']
+            basic_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
+            price_volume_action = vcp_detected or basic_accumulation
+            if not price_volume_action:
+                return reject_and_return('Stage 2 (Developing)', "Sin evidencia de VCP o acumulación institucional")
+
+            # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
+            passes_technical = True
+            stage_analysis = "Stage 2 (Uptrend)"
+            result['passes_minervini_technical'] = True
+            result['stage_analysis'] = stage_analysis
+
+            # --- EMBUDO DE FILTRADO FUNDAMENTAL (EARLY EXIT) ---
+
+            # FILTRO 6: EARNINGS
+            strong_earnings = False
+            earnings_acceleration = False
+            if ticker_info:
+                try:
+                    quarterly_earnings_growth = ticker_info.get('quarterlyEarningsGrowthYOY')
+                    if quarterly_earnings_growth is not None:
+                        strong_earnings = quarterly_earnings_growth >= 0.25
+                        earnings_acceleration = quarterly_earnings_growth > 0.3  # >30% como proxy de aceleración
+                    else:
+                        net_income = ticker_info.get('netIncomeToCommon')
+                        strong_earnings = net_income > 0 if net_income else False
+                except:
+                    strong_earnings = False
+            if not strong_earnings:
+                return reject_and_return(stage_analysis, "Earnings insuficientes (<25% YoY)", passes_technical=True)
+
+            # FILTRO 7: GROWTH (REVENUE + ROE)
+            strong_growth = False
+            roe_strong = False
+            if ticker_info:
+                try:
+                    revenue_growth = ticker_info.get('revenueGrowth')
+                    roe = ticker_info.get('returnOnEquity')
+                    revenue_strong = revenue_growth >= 0.20 if revenue_growth else False
+                    roe_strong = roe >= 0.17 if roe else False
+                    strong_growth = revenue_strong and roe_strong
+                except:
+                    strong_growth = False
+            if not strong_growth:
+                return reject_and_return(stage_analysis, "Growth insuficiente (Revenue <20% o ROE <17%)", passes_technical=True)
+
+            # FILTRO 8: EVIDENCIA INSTITUCIONAL
+            institutional_evidence = False
+            institutional_score = 0
+            institutional_details = []
+            if volume_50d_avg:
+                passes_institutional, institutional_score, institutional_details = self.hybrid_institutional_evidence(
+                    symbol, df, ticker_info, volume_50d_avg
+                )
+                institutional_evidence = passes_institutional
+            if not institutional_evidence:
+                reason = f"Evidencia institucional insuficiente (Score: {institutional_score}/8)"
+                return reject_and_return(stage_analysis, reason, passes_technical=True)
+
+            # --- ¡ÉXITO! LA ACCIÓN PASA TODOS LOS FILTROS ---
+            passes_fundamental = True
+            passes_all_filters = passes_technical and passes_fundamental
+            result['passes_minervini_fundamental'] = True
+
+            analysis_for_scoring = {
+                'stage_analysis': stage_analysis,
+                'rs_rating': rs_rating,
+                'distance_to_52w_high': distance_from_high,
+                'distance_from_52w_low': distance_from_low,
+                'vcp_detected': vcp_detected,
+                'institutional_accumulation': basic_accumulation,
+                'institutional_evidence': institutional_evidence,
+                'institutional_score': institutional_score,
+                'earnings_acceleration': earnings_acceleration,
+                'roe_strong': roe_strong
+            }
+            minervini_score = self.calculate_minervini_score(analysis_for_scoring)
+
+            # Actualizar el diccionario de resultados con todos los datos de la acción exitosa
+            result.update({
+                'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None, 'ma_150': round(ma_150, 2) if pd.notna(ma_150) else None,
+                'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None, 'high_52w': round(high_52w, 2) if high_52w else None,
+                'low_52w': round(low_52w, 2) if low_52w else None, 'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
+                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None, 'vcp_detected': vcp_detected,
+                'vcp_analysis': vcp_analysis, 'institutional_accumulation': basic_accumulation, 'institutional_evidence': institutional_evidence,
+                'institutional_score': institutional_score, 'institutional_details': institutional_details,
+                'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None, 'earnings_acceleration': earnings_acceleration,
+                'roe_strong': roe_strong, 'passes_all_filters': passes_all_filters, 'minervini_score': minervini_score,
+                'filter_reasons': ["✅ PASA TODOS LOS FILTROS MINERVINI"]
+            })
+            return result
+            
+        except Exception as e:
+            print(f"Error en análisis Minervini: {e}")
+            result['stage_analysis'] = 'Error en cálculo'
+            result['filter_reasons'] = ['Error de cálculo']
+            return result
+    
+    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings):
+        """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
         stock_data = {}
         failed_symbols = []
         
-        for i, symbol in enumerate(symbols):
-            # Retry logic para manejar rate limiting
+        for i, symbol in enumerate(symbols, 1):
             max_retries = 3
             retry_count = 0
             success = False
             
             while retry_count < max_retries and not success:
                 try:
-                    ticker = yf.Ticker(symbol)
-                    hist = ticker.history(period=period)
+                    # El historial ya está descargado, solo lo recuperamos del diccionario
+                    hist = all_historical_data.get(symbol)
+                    if hist is None or hist.empty:
+                        raise ValueError("Datos históricos no encontrados en el diccionario pre-cargado.")
                     
-                    if not hist.empty and len(hist) >= 10:
+                    if not hist.empty and len(hist) >= 250:  # Mínimo para análisis Minervini
                         hist_with_ma = self.calculate_moving_averages(hist)
                         
                         try:
+                            # La única llamada de red aquí es para los datos fundamentales (.info)
+                            ticker = yf.Ticker(symbol)
                             ticker_info = ticker.info
                             company_info = {
                                 'name': ticker_info.get('longName', 'N/A'),
@@ -418,42 +552,49 @@ class USStockMovingAveragesExtractor:
                                 'market_cap': ticker_info.get('marketCap', 'N/A')
                             }
                         except Exception as info_error:
-                            if "rate" in str(info_error).lower() or "429" in str(info_error):
+                            error_str = str(info_error).lower()
+                            # Estrategia de reintento diferenciada
+                            if "401" in error_str: # Error de autorización persistente
+                                wait_time = 60 # Pausa larga para "enfriar" la conexión
+                                print(f"⏳ {symbol} - Error 401 (Unauthorized). Pausa larga de {wait_time}s. Reintentando...")
+                                time.sleep(wait_time)
+                                retry_count += 1
+                                continue
+                            elif "rate" in error_str or "429" in error_str: # Rate limit normal
                                 time.sleep(2 ** retry_count)
                                 retry_count += 1
                                 continue
                             else:
+                                print(f"⚠️  {symbol} - No se pudo obtener .info (fundamentales), continuando sin ellos. Error: {info_error}")
                                 ticker_info = {}
                                 company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
                         
-                        ma_status = self.get_current_ma_status(hist_with_ma, ticker_info, spy_return_20d)
+                        stock_rs_rating = rs_ratings.get(symbol)
+                        minervini_analysis = self.get_minervini_analysis(hist_with_ma, stock_rs_rating, ticker_info, symbol)
                         
                         stock_data[symbol] = {
                             'data': hist_with_ma,
-                            'ma_status': ma_status,
+                            'minervini_analysis': minervini_analysis,
                             'info': company_info
                         }
                         
-                        filter_status = "✅ PASA" if ma_status['passes_filters'] else "❌ FILTRADO"
-                        price = ma_status.get('current_price', 0)
-                        rel_strength = ma_status.get('relative_strength_value', 0)
-                        rel_str = f"SPY{rel_strength:+.1f}%" if rel_strength else "SPY:N/A"
+                        # Status reporting
+                        stage = minervini_analysis.get('stage_analysis', 'Unknown')
+                        rs_rating = minervini_analysis.get('rs_rating', 0)
+                        price = minervini_analysis.get('current_price', 0)
+                        score = minervini_analysis.get('minervini_score', 0)
                         
-                        # Mostrar razón de filtrado si no pasa
-                        if ma_status['passes_filters']:
-                            reason_str = ""
-                        else:
-                            reasons = ma_status.get('filter_reasons', ['Sin razón'])
-                            first_reason = reasons[0] if reasons else 'Sin razón'
-                            reason_str = f" - [{first_reason}]"
-                        
-                        retry_info = f" (retry {retry_count})" if retry_count > 0 else ""
-                        print(f"{filter_status} {symbol} - ${price:.2f} - {rel_str}{reason_str}{retry_info} - {i+1}/{len(symbols)}")
+                        # Imprimir solo si la acción pasa todos los filtros para mantener el log limpio
+                        if minervini_analysis.get('passes_all_filters', False):
+                            status = f"✅ STAGE 2"
+                            reason_str = f"Score:{score} | RS:{rs_rating} | {stage}"
+                            retry_info = f" (retry {retry_count})" if retry_count > 0 else ""
+                            print(f"{status} {symbol} - ${price:.2f} - {reason_str}{retry_info} - {i}/{len(symbols)}")
                         success = True
                         
                     else:
                         failed_symbols.append(symbol)
-                        print(f"✗ {symbol} - Datos insuficientes")
+                        print(f"✗ {symbol} - Datos insuficientes (<250 días)")
                         success = True
                     
                 except Exception as e:
@@ -475,20 +616,101 @@ class USStockMovingAveragesExtractor:
                         break
                 
                 if success or retry_count >= max_retries:
-                    time.sleep(0.2)  # 0.2s entre acciones
+                    time.sleep(0.5)  # Pausa aumentada para ser más amable con la API
                     
         return stock_data, failed_symbols
+
+    def calculate_all_rs_scores(self, all_data):
+        """Paso 1 y 2 para RS Rating: Calcula el score de rendimiento para todas las acciones."""
+        print("\nCalculando scores de rendimiento para el RS Rating...")
+        rs_scores = {}
+        
+        for symbol, df in all_data.items():
+            try:
+                if len(df) < 252:
+                    continue
+
+                current_price = df['Close'].iloc[-1]
+                p3 = ((current_price / df['Close'].iloc[-63]) - 1) * 100 if len(df) >= 63 else 0
+                p6 = ((current_price / df['Close'].iloc[-126]) - 1) * 100 if len(df) >= 126 else 0
+                p9 = ((current_price / df['Close'].iloc[-189]) - 1) * 100 if len(df) >= 189 else 0
+                p12 = ((current_price / df['Close'].iloc[-252]) - 1) * 100
+                
+                # Fórmula IBD: RS = 40% × P3 + 20% × P6 + 20% × P9 + 20% × P12
+                rs_score = (0.4 * p3) + (0.2 * p6) + (0.2 * p9) + (0.2 * p12)
+                rs_scores[symbol] = rs_score
+            except Exception:
+                continue # Ignorar errores en acciones individuales
+        
+        print(f"✓ Scores de rendimiento calculados para {len(rs_scores)} acciones.")
+        return pd.Series(rs_scores)
+
+    def calculate_rs_ratings_from_scores(self, rs_scores):
+        """Paso 3 para RS Rating: Convierte scores en un ranking percentil (0-100)."""
+        if rs_scores.empty:
+            return pd.Series()
+        
+        # Usar rank(pct=True) para obtener el percentil (0.0 a 1.0)
+        rs_ratings = rs_scores.rank(pct=True) * 100
+        print(f"✓ RS Ratings (percentiles) calculados. Ejemplo: {rs_ratings.head(1).to_dict()}")
+        return rs_ratings.round(1)
+
+    def download_all_data(self, symbols, period="2y"):
+        """Descarga datos históricos en lotes para evitar rate limiting y fallos masivos."""
+        print(f"Iniciando descarga robusta de datos para {len(symbols)} símbolos...")
+        all_data = {}
+        batch_size = 75 # Reducido para mayor fiabilidad
+        total_batches = (len(symbols) + batch_size - 1) // batch_size
+        
+        for i in range(total_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, len(symbols))
+            batch_symbols = symbols[start_idx:end_idx]
+            
+            print(f"  Descargando lote {i+1}/{total_batches} ({len(batch_symbols)} símbolos)...")
+            
+            max_retries = 3
+            retry_count = 0
+            success = False
+            
+            while retry_count < max_retries and not success:
+                try:
+                    batch_data = yf.download(batch_symbols, period=period, group_by='ticker', auto_adjust=True, threads=True, progress=False)
+                    
+                    for symbol in batch_symbols:
+                        if symbol in batch_data.columns:
+                            # Asegurarse de que el df no está vacío y tiene datos válidos
+                            df = batch_data[symbol].dropna()
+                            if not df.empty:
+                                all_data[symbol] = df
+                    
+                    print(f"  ✓ Lote {i+1} descargado con éxito.")
+                    success = True
+                    
+                except Exception as e:
+                    retry_count += 1
+                    wait_time = 2 ** retry_count
+                    print(f"  ⚠️ Error en lote {i+1}: {e}. Reintentando en {wait_time}s... ({retry_count}/{max_retries})")
+                    time.sleep(wait_time)
+            
+            if not success:
+                print(f"  ❌ Lote {i+1} falló después de {max_retries} reintentos. Omitiendo este lote.")
+            
+            time.sleep(1) # Pausa de 1s entre lotes para no saturar la API
+        
+        print(f"\n✓ Descarga masiva completada. Total de datos obtenidos para {len(all_data)} símbolos.")
+        return all_data
     
-    def save_ma_data(self, stock_data, filename_prefix="us_stocks_filtered_moving_averages"):
-        """Guarda los datos con medias móviles y aplicación de filtros"""
+    def save_minervini_data(self, stock_data, filename_prefix="minervini_sepa_analysis"):
+        """Guarda los datos con análisis Minervini"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         all_data = []
-        filtered_data = []
+        stage2_data = []
         
         for symbol, data in stock_data.items():
             hist_df = data['data']
-            ma_status = data['ma_status']
+            analysis = data['minervini_analysis']
             info = data['info']
             
             if not hist_df.empty:
@@ -497,32 +719,28 @@ class USStockMovingAveragesExtractor:
                     'Company_Name': info.get('name', 'N/A'),
                     'Sector': info.get('sector', 'N/A'),
                     'Industry': info.get('industry', 'N/A'),
-                    'Current_Price': ma_status.get('current_price'),
-                    'MA_10': ma_status.get('ma_10'),
-                    'MA_21': ma_status.get('ma_21'),
-                    'MA_50': ma_status.get('ma_50'),
-                    'MA_200': ma_status.get('ma_200'),
-                    'Volume_50d_Avg': ma_status.get('volume_50d_avg'),
-                    'Last_Day_Volume': ma_status.get('last_day_volume'),
-                    'Volume_Ratio_vs_50d': ma_status.get('volume_ratio_vs_50d'),
-                    'Volume_Above_25pct': ma_status.get('volume_above_25pct'),
-                    'Price_vs_MA50_Pct': ma_status.get('price_vs_ma50_pct'),
-                    'MA200_Trend_Positive': ma_status.get('ma200_trend_positive'),
-                    'Last_Day_Change_Pct': ma_status.get('last_day_change_pct'),
-                    'Last_Day_Positive': ma_status.get('last_day_positive'),
-                    'Quarterly_Earnings_Positive': ma_status.get('quarterly_earnings_positive'),
-                    'Revenue_Growth_Positive': ma_status.get('revenue_growth_positive'),
-                    'Earnings_Growth_Positive': ma_status.get('earnings_growth_positive'),
-                    'Growth_Criteria_Met': ma_status.get('growth_criteria_met'),
-                    'Relative_Strength_vs_SPY': ma_status.get('relative_strength_vs_spy'),
-                    'Relative_Strength_Value': ma_status.get('relative_strength_value'),
-                    'Above_MA_10': ma_status.get('above_ma_10'),
-                    'Above_MA_21': ma_status.get('above_ma_21'),
-                    'Above_MA_50': ma_status.get('above_ma_50'),
-                    'Above_MA_200': ma_status.get('above_ma_200'),
-                    'MA_Trend': ma_status.get('ma_trend'),
-                    'Passes_Filters': ma_status.get('passes_filters'),
-                    'Filter_Reasons': "; ".join(ma_status.get('filter_reasons', [])),
+                    'Current_Price': analysis.get('current_price'),
+                    'Minervini_Score': analysis.get('minervini_score'),
+                    'MA_50': analysis.get('ma_50'),
+                    'MA_150': analysis.get('ma_150'),
+                    'MA_200': analysis.get('ma_200'),
+                    'High_52w': analysis.get('high_52w'),
+                    'Low_52w': analysis.get('low_52w'),
+                    'Distance_From_52w_Low': analysis.get('distance_from_52w_low'),
+                    'Distance_To_52w_High': analysis.get('distance_to_52w_high'),
+                    'RS_Rating': analysis.get('rs_rating'),
+                    'VCP_Detected': analysis.get('vcp_detected'),
+                    'Institutional_Accumulation': analysis.get('institutional_accumulation'),     # Basic
+                    'Institutional_Evidence': analysis.get('institutional_evidence'),             # Advanced
+                    'Institutional_Score': analysis.get('institutional_score'),                   # Detailed score
+                    'Volume_50d_Avg': analysis.get('volume_50d_avg'),
+                    'Earnings_Acceleration': analysis.get('earnings_acceleration'),
+                    'ROE_Strong': analysis.get('roe_strong'),
+                    'Stage_Analysis': analysis.get('stage_analysis'),
+                    'Passes_Technical': analysis.get('passes_minervini_technical'),
+                    'Passes_Fundamental': analysis.get('passes_minervini_fundamental'),
+                    'Passes_All_Filters': analysis.get('passes_all_filters'),
+                    'Filter_Reasons': "; ".join(analysis.get('filter_reasons', [])),
                     'Data_Points': len(hist_df),
                     'Start_Date': hist_df.index.min().strftime('%Y-%m-%d'),
                     'End_Date': hist_df.index.max().strftime('%Y-%m-%d')
@@ -530,108 +748,141 @@ class USStockMovingAveragesExtractor:
                 
                 all_data.append(row_data)
                 
-                if ma_status.get('passes_filters', False):
-                    filtered_data.append(row_data)
+                if analysis.get('passes_all_filters', False):
+                    stage2_data.append(row_data)
         
+        # Guardar TODOS los datos
         all_df = pd.DataFrame(all_data)
         all_filename = f"{filename_prefix}_ALL_DATA_{timestamp}.csv"
         all_df.to_csv(all_filename, index=False)
         print(f"✓ Guardado: {all_filename}")
         
-        if filtered_data:
-            filtered_df = pd.DataFrame(filtered_data)
-            filtered_filename = f"{filename_prefix}_FILTERED_ONLY_{timestamp}.csv"
-            filtered_df.to_csv(filtered_filename, index=False)
-            print(f"✓ Guardado: {filtered_filename}")
+        # Guardar SOLO Stage 2 stocks que pasan todos los filtros
+        if stage2_data:
+            stage2_df = pd.DataFrame(stage2_data)
+            stage2_filename = f"{filename_prefix}_STAGE2_ONLY_{timestamp}.csv"
+            stage2_df.to_csv(stage2_filename, index=False)
+            print(f"✓ Guardado: {stage2_filename}")
         else:
-            print("❌ Ninguna acción pasó todos los filtros")
-            filtered_df = pd.DataFrame()
+            print("❌ Ninguna acción pasó todos los filtros Minervini")
+            stage2_df = pd.DataFrame()
         
-        return all_df, filtered_df
+        return all_df, stage2_df
 
 def main():
-    """Función principal para GitHub Actions - ANÁLISIS COMPLETO CON 8 FILTROS + ANÁLISIS DE ELIMINACIÓN"""
-    print("=== TRADING BOT AUTOMATIZADO - 8 FILTROS ===")
+    """Función principal para GitHub Actions - Análisis Minervini SEPA completo"""
+    print("=== MINERVINI SEPA AUTOMATED SCREENER ===")
+    print("Sistema basado en metodología SEPA de Mark Minervini")
+    print("11 filtros: 8 técnicos + 3 fundamentales + Scoring System\n")
     
-    extractor = USStockMovingAveragesExtractor()
+    screener = MinerviniStockScreener()
     
     print("Obteniendo símbolos NYSE + NASDAQ...")
-    all_symbols = extractor.get_nyse_nasdaq_symbols()
+    all_symbols = screener.get_nyse_nasdaq_symbols()
+    original_count = len(all_symbols)
+    
+    # Filtro final para eliminar tickers con caracteres especiales que puedan causar problemas
+    all_symbols = [s for s in all_symbols if '^' not in s and '.' not in s and '/' not in s]
+    print(f"✓ Símbolos filtrados (eliminados preferentes/warrants): {original_count - len(all_symbols)} eliminados")
+    print(f"Total de acciones a analizar: {len(all_symbols)}")
     
     if not all_symbols:
         print("❌ No se pudieron obtener símbolos")
         exit(1)
     
-    # Calcular SPY return solo UNA VEZ al inicio
-    spy_return_20d = extractor.calculate_spy_return_20d()
+    # --- NUEVO FLUJO PARA RS RATING PRECISO ---
     
-    # Procesar acciones
+    # PASO 1: Descarga masiva de datos
     symbols_to_process = all_symbols
-    print(f"\nProcesando {len(symbols_to_process)} acciones...")
+    all_historical_data = screener.download_all_data(symbols_to_process)
     
-    # Dividir en lotes
-    batch_size = 50  # batch_size = 50
+    # PASO 2: Calcular scores de rendimiento
+    rs_scores = screener.calculate_all_rs_scores(all_historical_data)
+    
+    # PASO 3: Calcular RS Ratings finales (percentiles)
+    rs_ratings = screener.calculate_rs_ratings_from_scores(rs_scores)
+    
+    # PASO 4: Análisis Minervini completo usando los RS Ratings pre-calculados
+    batch_size = 30  # Reducido para mayor fiabilidad y evitar rate limits
+    print(f"\nIniciando análisis de {len(symbols_to_process)} acciones con criterios Minervini SEPA...")
+    print("Usando RS Ratings pre-calculados para mayor precisión.\n")
+
     total_batches = (len(symbols_to_process) + batch_size - 1) // batch_size
-    
     all_stock_data = {}
     all_failed = []
     
     for batch_num in range(total_batches):
         start_idx = batch_num * batch_size
         end_idx = min(start_idx + batch_size, len(symbols_to_process))
-        batch_symbols = symbols_to_process[start_idx:end_idx]
-        
+        batch_symbols = symbols_to_process[start_idx:end_idx]        
         print(f"\n=== LOTE {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx}) ===")
         
-        batch_data, batch_failed = extractor.get_stock_data_with_ma(batch_symbols, spy_return_20d)
+        # La función ahora recibe los datos históricos y solo descarga .info si es necesario
+        batch_data, batch_failed = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings)
         
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
         
-        batch_passed = sum(1 for data in batch_data.values() if data['ma_status']['passes_filters'])
-        print(f"Lote completado: {len(batch_data)} procesadas, {batch_passed} pasan filtros, {len(batch_failed)} errores")
+        batch_passed = sum(1 for data in batch_data.values() if data['minervini_analysis']['passes_all_filters'])
+        batch_filtered = len(batch_data) - batch_passed
+        avg_score = np.mean([data['minervini_analysis']['minervini_score'] for data in batch_data.values()]) if batch_data else 0
+        print(f"Lote completado: {batch_passed} Stage 2 | {batch_filtered} Filtradas | {len(batch_failed)} Errores | Score Promedio: {avg_score:.1f}")
         
         if batch_num < total_batches - 1:
-            print("Pausa 10s...")
-            time.sleep(10)  # delay_between_batches = 15s
+            print("Pausa 30s...")
+            time.sleep(30)  # Pausa aumentada para ser más amable con la API
     
     # Resultados finales
-    print(f"\n=== RESUMEN FINAL ===")
+    print(f"\n=== RESUMEN FINAL MINERVINI ===")
     print(f"Procesadas: {len(all_stock_data)} | Errores: {len(all_failed)}")
     
     if all_stock_data:
-        all_summary, filtered_summary = extractor.save_ma_data(all_stock_data)
+        all_summary, stage2_summary = screener.save_minervini_data(all_stock_data)
         
-        passed_count = len(filtered_summary) if not filtered_summary.empty else 0
-        filter_rate = (passed_count / len(all_stock_data)) * 100 if len(all_stock_data) > 0 else 0
+        stage2_count = len(stage2_summary) if not stage2_summary.empty else 0
+        success_rate = (stage2_count / len(all_stock_data)) * 100 if len(all_stock_data) > 0 else 0
         
-        print(f"Acciones que PASAN filtros: {passed_count}")
-        print(f"Tasa de éxito: {filter_rate:.1f}%")
+        print(f"Acciones Stage 2 (pasan todos los filtros): {stage2_count}")
+        print(f"Tasa de éxito Minervini: {success_rate:.1f}%")
         
-        if spy_return_20d:
-            print(f"SPY 20d: {spy_return_20d:+.2f}%")
+        # Mostrar top 10 por Minervini Score
+        if not all_summary.empty:
+            top_10 = all_summary.nlargest(10, 'Minervini_Score')
+            print(f"\n🔝 TOP 10 (Score más alto, no necesariamente pasan todos los filtros):")
+            print(f"   (✅ Pasa todos los filtros | ⚠️ No pasa todos los filtros)")
+            for i, (_, row) in enumerate(top_10.iterrows()):
+                icon = "✅" if row['Passes_All_Filters'] else "⚠️"
+                stage = row['Stage_Analysis'][:10] 
+                rs = row['RS_Rating'] if pd.notna(row['RS_Rating']) else 0
+                score = row['Minervini_Score']
+                price = row['Current_Price']
+                print(f"{i+1:2d}. {icon} {row['Symbol']:6s} Score:{score:5.1f} ${price:7.2f} RS:{rs:5.1f} {stage}")
         
-        # ANÁLISIS DE RAZONES DE ELIMINACIÓN (TOP 10)
+        # Análisis por Stage
         if len(all_summary) > 0:
-            print(f"\n=== RAZONES DE ELIMINACIÓN (TOP 10) ===")
-            filter_reasons_count = {}
-            total_stocks = len(all_summary)
-            
-            for _, row in all_summary.iterrows():
-                if not row['Passes_Filters']:
-                    reasons = str(row['Filter_Reasons']).split(';')
-                    for reason in reasons:
-                        reason = reason.strip()
-                        if reason and reason != "✅ PASA TODOS LOS FILTROS" and reason != "nan":
-                            filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
-            
-            # Mostrar top 10 razones
-            for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
-                percentage = (count / total_stocks) * 100
-                print(f"  {reason}: {count} acciones ({percentage:.1f}%)")
-            
-            if not filter_reasons_count:
-                print("  (Todas las acciones pasaron los filtros)")
+            stage_distribution = all_summary['Stage_Analysis'].value_counts()
+            print(f"\n=== DISTRIBUCIÓN POR STAGE ===")
+            for stage, count in stage_distribution.items():
+                percentage = (count / len(all_summary)) * 100
+                avg_score = all_summary[all_summary['Stage_Analysis'] == stage]['Minervini_Score'].mean()
+                print(f"  {stage}: {count} acciones ({percentage:.1f}%) - Score promedio: {avg_score:.1f}")
+        
+        # Top razones de filtrado
+        print(f"\n=== RAZONES DE ELIMINACIÓN (TOP 10) ===")
+        filter_reasons_count = {}
+        total_stocks = len(all_summary)
+        
+        for _, row in all_summary.iterrows():
+            if not row['Passes_All_Filters']:
+                reasons = str(row['Filter_Reasons']).split(';')
+                for reason in reasons:
+                    reason = reason.strip()
+                    if reason and reason != "✅ PASA TODOS LOS FILTROS MINERVINI" and reason != "nan":
+                        filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
+        
+        for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
+            percentage = (count / total_stocks) * 100
+            print(f"  {reason}: {count} acciones ({percentage:.1f}%)")
         
     else:
         print("❌ No se obtuvieron datos")

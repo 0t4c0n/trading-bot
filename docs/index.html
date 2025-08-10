@@ -3,17 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Bot - Top Acciones</title>
+    <title>Minervini SEPA - Top Stage 2 Stocks</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f4f7f9;
             min-height: 100vh;
             padding: 10px;
             color: #333;
@@ -21,265 +26,263 @@
         
         .container {
             max-width: 500px;
-            margin: 0 auto;
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
+            margin: 10px auto;
+            background: #f4f7f9;
             border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             overflow: hidden;
         }
         
         .header {
-            background: linear-gradient(135deg, #4CAF50, #45a049);
-            color: white;
-            padding: 20px;
-            text-align: center;
-        }
-        
-        .header-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            max-width: 100%;
-        }
-        
-        .title-section {
-            flex: 1;
-            text-align: left;
+            padding: 15px 20px;
+            background-color: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            margin-bottom: 15px;
         }
         
         .header h1 {
-            font-size: 1.5em;
-            margin-bottom: 5px;
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #1a202c;
         }
         
         .header .subtitle {
-            opacity: 0.9;
+            color: #4a5568;
             font-size: 0.9em;
-        }
-        
-        .creator-section {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.15);
-            padding: 10px 16px;
-            border-radius: 25px;
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-        }
-        
-        .creator-avatar {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            overflow: hidden;
-            border: 3px solid rgba(255, 255, 255, 0.4);
-            background: rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-        }
-        
-        .creator-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            image-rendering: pixelated;
-            image-rendering: -moz-crisp-edges;
-            image-rendering: crisp-edges;
-        }
-        
-        .creator-info {
-            text-align: right;
-            line-height: 1.2;
-        }
-        
-        .creator-name {
-            font-weight: bold;
-            font-size: 1.1em;
-            color: white;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-        }
-        
-        .creator-label {
-            font-size: 0.8em;
-            opacity: 0.9;
-            color: rgba(255, 255, 255, 0.95);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+            font-weight: 500;
         }
         
         .summary {
-            padding: 15px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e9ecef;
+            padding: 0;
+            margin-bottom: 15px;
         }
         
         .summary-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 15px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
             text-align: center;
         }
         
         .summary-item {
-            background: white;
-            padding: 12px 8px;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            background: #ffffff;
+            padding: 12px 5px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         }
         
         .summary-number {
-            font-size: 1.8em;
-            font-weight: bold;
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #1a202c;
+        }
+        
+        .summary-number.stage2 {
+            color: #16a34a;
+        }
+        
+        .summary-number.score {
+            color: #2563eb;
         }
         
         .summary-number.success {
-            color: #4CAF50;
-        }
-        
-        .summary-number.warning {
-            color: #ff9800;
+            color: #d97706;
         }
         
         .summary-label {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 5px;
+            font-size: 0.75em;
+            color: #4a5568;
+            margin-top: 4px;
+            font-weight: 500;
         }
         
         .top-picks {
-            padding: 20px;
+            padding: 0;
         }
         
         .section-title {
-            font-size: 1.2em;
-            font-weight: bold;
+            font-size: 1.1em;
+            font-weight: 600;
             margin-bottom: 15px;
-            color: #333;
+            color: #1a202c;
             display: flex;
             align-items: center;
-        }
-        
-        .section-title::before {
-            content: "🔥";
-            margin-right: 8px;
+            padding: 0 5px;
         }
         
         .stock-card {
             background: white;
             border-radius: 15px;
             padding: 15px;
-            margin-bottom: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            border-left: 4px solid #4CAF50;
-            transition: transform 0.2s;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s ease-in-out;
+            position: relative;
         }
         
         .stock-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+            border-color: #3b82f6;
         }
         
         .stock-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         
         .stock-info h3 {
-            font-size: 1.1em;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 2px;
+            font-size: 1.2em;
+            font-weight: 700;
+            color: #1a202c;
         }
         
         .stock-info .company {
             font-size: 0.8em;
-            color: #666;
-            margin-bottom: 2px;
+            color: #4a5568;
+            font-weight: 500;
         }
         
         .stock-info .sector {
             font-size: 0.75em;
-            color: #999;
+            color: #718096;
         }
         
         .stock-price {
             text-align: right;
+            flex-shrink: 0;
+            margin-left: 10px;
         }
         
         .price {
             font-size: 1.2em;
-            font-weight: bold;
-            color: #333;
+            font-weight: 700;
+            color: #1a202c;
         }
         
-        .score {
-            font-size: 0.8em;
-            color: #4CAF50;
-            font-weight: bold;
+        .minervini-score {
+            font-size: 0.9em;
+            color: #16a34a;
+            font-weight: 600;
         }
         
-        .metrics {
+        .stats-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: 1fr 1fr;
             gap: 10px;
-            margin-top: 10px;
+            margin-bottom: 12px;
         }
         
-        .metric {
-            background: #f8f9fa;
-            padding: 8px;
-            border-radius: 8px;
+        .stat-item {
+            background-color: #f8fafc;
+            padding: 10px;
+            border-radius: 10px;
             text-align: center;
         }
         
-        .metric-value {
-            font-weight: bold;
+        .stage-badge {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #1a202c;
+            margin-bottom: 3px;
+        }
+        
+        .stat-label {
+            font-size: 0.7em;
+            color: #4a5568;
+            font-weight: 500;
+        }
+        
+        .technical-indicators {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .indicator-badge {
+            background: #eef2ff;
+            color: #4338ca;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75em;
+            font-weight: 600;
+        }
+        
+        .recommendation {
+            margin-top: 12px;
+            padding: 10px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
             font-size: 0.9em;
         }
         
-        .metric-label {
-            font-size: 0.7em;
-            color: #666;
-            margin-top: 2px;
+        .recommendation.buy-strong {
+            background: #dcfce7;
+            color: #166534;
         }
         
-        .positive {
-            color: #4CAF50;
+        .recommendation.buy-good {
+            background: #f0fdf4;
+            color: #15803d;
         }
         
-        .negative {
-            color: #f44336;
+        .recommendation.watch {
+            background: #fefce8;
+            color: #854d0e;
         }
         
-        .neutral {
-            color: #ff9800;
+        .recommendation.wait {
+            background: #fffbeb;
+            color: #b45309;
+        }
+        
+        .recommendation.avoid {
+            background: #fef2f2;
+            color: #b91c1c;
         }
         
         .rank {
             position: absolute;
-            top: -5px;
-            left: -5px;
-            background: #4CAF50;
+            top: 10px;
+            left: -8px;
+            background: #2563eb;
             color: white;
-            width: 25px;
-            height: 25px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 0.8em;
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-weight: 700;
+            font-size: 0.75em;
+            box-shadow: 2px 2px 8px rgba(37, 99, 235, 0.4);
         }
         
+        .perfect-candidate-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: linear-gradient(45deg, #16a34a, #22c55e);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
             color: #666;
         }
-        
+
         .error {
             background: #ffebee;
             color: #c62828;
@@ -291,44 +294,20 @@
         
         .last-update {
             text-align: center;
-            padding: 15px;
+            padding: 20px;
             font-size: 0.8em;
-            color: #666;
-            background: #f8f9fa;
-        }
-        
-        .signature {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #e9ecef;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            background-clip: text;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: #718096;
             font-weight: 500;
-        }
-        
-        .ma-levels {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 5px;
-            margin-top: 8px;
-        }
-        
-        .ma-level {
-            background: #e3f2fd;
-            padding: 4px;
-            border-radius: 4px;
-            text-align: center;
-            font-size: 0.7em;
+            line-height: 1.5;
         }
         
         .refresh-btn {
             position: fixed;
             bottom: 20px;
             right: 20px;
-            background: #4CAF50;
+            background: #ffffff;
             color: white;
+            background: #2563eb;
             border: none;
             width: 50px;
             height: 50px;
@@ -336,126 +315,19 @@
             font-size: 1.2em;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             cursor: pointer;
-            transition: transform 0.2s;
+            transition: all 0.2s;
         }
         
         .refresh-btn:hover {
             transform: scale(1.1);
         }
         
-        /* Estilos para análisis de eliminación */
-        .elimination-analysis {
-            margin-top: 20px;
-            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
-            border-radius: 15px;
-            padding: 20px;
-            border-left: 4px solid #ff6b6b;
-        }
-        
-        .elimination-title {
-            font-size: 1.2em;
-            font-weight: bold;
-            color: #495057;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-        }
-        
-        .elimination-title::before {
-            content: "📊";
-            margin-right: 8px;
-        }
-        
-        .elimination-stats {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .elimination-stat {
-            background: white;
-            padding: 12px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        .elimination-stat-number {
-            font-size: 1.5em;
-            font-weight: bold;
-            color: #ff6b6b;
-        }
-        
-        .elimination-stat-label {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 5px;
-        }
-        
-        .reasons-list {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 8px;
-        }
-        
-        .reason-item {
-            background: white;
-            padding: 10px 15px;
-            border-radius: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            border-left: 3px solid #ff6b6b;
-        }
-        
-        .reason-text {
-            font-size: 0.9em;
-            color: #495057;
-            flex: 1;
-        }
-        
-        .reason-stats {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            min-width: 80px;
-        }
-        
-        .reason-count {
-            font-weight: bold;
-            color: #ff6b6b;
-            font-size: 0.9em;
-        }
-        
-        .reason-percentage {
-            font-size: 0.8em;
-            color: #666;
-        }
-        
-        .reason-bar {
-            width: 100%;
-            height: 4px;
-            background: #e9ecef;
-            border-radius: 2px;
-            margin-top: 5px;
-            overflow: hidden;
-        }
-        
-        .reason-bar-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #ff6b6b, #ff8e8e);
-            border-radius: 2px;
-            transition: width 0.3s ease;
-        }
-        
-        /* Estilos para cuando no hay resultados */
         .no-results {
             text-align: center;
             padding: 30px 20px;
-            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            background: #ffffff;
             border-radius: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
             margin: 10px 0;
         }
         
@@ -468,7 +340,7 @@
         .no-results-title {
             font-size: 1.3em;
             font-weight: bold;
-            color: #495057;
+            color: #1a202c;
             margin-bottom: 8px;
         }
         
@@ -478,160 +350,94 @@
             margin-bottom: 25px;
         }
         
-        .no-results-details {
-            background: white;
+        .minervini-criteria {
+            background: #f8fafc;
             border-radius: 12px;
-            padding: 20px;
-            margin: 20px 0;
+            padding: 15px;
+            margin-top: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         
-        .filter-summary {
-            text-align: left;
-            margin-bottom: 20px;
-        }
-        
-        .filter-summary-title {
+        .criteria-title {
             font-weight: bold;
             color: #495057;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
             text-align: center;
+            font-size: 1.1em;
         }
         
-        .filter-list {
+        .criteria-section {
+            margin-bottom: 15px;
+        }
+        
+        .criteria-subtitle {
+            font-weight: bold;
+            color: #16a34a;
+            margin-bottom: 8px;
+            font-size: 0.85em;
+        }
+        
+        .criteria-list {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 6px;
+            gap: 4px;
         }
         
-        .filter-item {
-            background: #f8f9fa;
-            padding: 8px 12px;
+        .criteria-item {
+            background: #ffffff;
+            padding: 6px 10px;
             border-radius: 6px;
-            font-size: 0.85em;
-            border-left: 3px solid #4CAF50;
+            font-size: 0.8em;
+            border-left: 3px solid #16a34a;
         }
         
-        .suggestions {
-            text-align: left;
-            border-top: 1px solid #e9ecef;
-            padding-top: 15px;
+        .market-health {
+            background: white;
+            border-radius: 15px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         }
-        
-        .suggestions-title {
-            font-weight: bold;
-            color: #495057;
-            margin-bottom: 10px;
-            text-align: center;
-        }
-        
-        .suggestion-item {
-            background: #fff3cd;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 0.85em;
-            margin-bottom: 6px;
-            border-left: 3px solid #ffc107;
-        }
-        
-        .retry-info {
-            margin-top: 20px;
-            padding: 12px;
-            background: #e7f3ff;
-            border-radius: 8px;
-            color: #004085;
-            font-size: 0.9em;
-        }
-        
-        /* Estilos para información de crecimiento */
-        .growth-info {
+
+        .chart-container {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 10px;
-            padding: 8px 0;
-            border-top: 1px solid #f0f0f0;
+            gap: 5px;
+            height: 100px;
+            align-items: flex-end;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
         }
-        
-        .growth-badge {
-            background: linear-gradient(135deg, #4CAF50, #45a049);
-            color: white;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.75em;
-            font-weight: bold;
+
+        .chart-bar {
+            flex-grow: 1;
+            background-color: #ccc;
+            text-align: center;
+            position: relative;
+            border-radius: 4px 4px 0 0;
         }
-        
-        .volume-info {
-            font-size: 0.75em;
-            color: #666;
+
+        .bar-label {
+            position: absolute;
+            bottom: -20px;
+            width: 100%;
+            font-size: 0.7em;
+            color: #4a5568;
             font-weight: 500;
         }
         
+        .bar-value {
+            font-size: 0.8em;
+            font-weight: 600;
+            color: white;
+        }
         @media (max-width: 480px) {
             .container {
-                margin: 5px;
-                border-radius: 15px;
-            }
-            
-            .header-content {
-                flex-direction: column;
-                gap: 15px;
-                text-align: center;
-            }
-            
-            .title-section {
-                text-align: center;
-            }
-            
-            .creator-section {
-                order: -1;
-                align-self: center;
-                padding: 12px 18px;
-                gap: 15px;
-            }
-            
-            .creator-avatar {
-                width: 70px;
-                height: 70px;
-                border-width: 4px;
-            }
-            
-            .creator-name {
-                font-size: 1.2em;
-            }
-            
-            .creator-label {
-                font-size: 0.85em;
+                margin: 0;
+                padding: 5px;
             }
             
             .summary-grid {
-                grid-template-columns: repeat(3, 1fr);
-                gap: 10px;
-            }
-            
-            .metrics {
                 grid-template-columns: repeat(2, 1fr);
-                gap: 8px;
-            }
-            
-            .elimination-stats {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 10px;
-            }
-            
-            .reason-item {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 8px;
-            }
-            
-            .reason-stats {
-                align-items: flex-start;
-                flex-direction: row;
-                gap: 10px;
-                width: 100%;
-                justify-content: space-between;
             }
         }
     </style>
@@ -639,26 +445,15 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="header-content">
-                <div class="title-section">
-                    <h1>📈 Trading Bot</h1>
-                    <div class="subtitle">Top Acciones Filtradas</div>
-                </div>
-                <div class="creator-section">
-                    <div class="creator-avatar">
-                        <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="0t4c0n" id="creator-img">
-                    </div>
-                    <div class="creator-info">
-                        <div class="creator-name">0t4c0n</div>
-                        <div class="creator-label">Creator</div>
-                    </div>
-                </div>
+            <div class="title-section">
+                <h1>📈 Minervini SEPA</h1>
+                <div class="subtitle">Top Stage 2 Stocks</div>
             </div>
         </div>
         
         <div id="content">
             <div class="loading">
-                <div>🔄 Cargando datos...</div>
+                <div>🔄 Cargando datos Minervini...</div>
             </div>
         </div>
     </div>
@@ -668,169 +463,70 @@
     </button>
 
     <script>
-        let lastUpdateTime = null;
-        
-        // Función para cargar imagen de perfil desde archivo
-        function loadProfileImage() {
-            // Configurar imagen por defecto (pixel art de 0t4c0n más grande y detallado)
-            setDefaultAvatar();
-        }
-        
-        function setDefaultAvatar() {
-            document.getElementById('creator-img').src = "data:image/jpeg;base64,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";
-        }
-        
-        function getNextUpdateTime() {
-            const now = new Date();
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            
-            // Determinar si estamos en horario de verano o estándar
-            const isEST = now.getMonth() < 2 || now.getMonth() > 10; // Nov-Mar = EST
-            const nextUpdateHour = isEST ? 1 : 0; // 01:00 UTC (EST) o 00:00 UTC (EDT)
-            
-            const nextUpdate = new Date(tomorrow);
-            nextUpdate.setUTCHours(nextUpdateHour, 0, 0, 0);
-            
-            // Si es fin de semana, ajustar al próximo lunes
-            const dayOfWeek = nextUpdate.getUTCDay();
-            if (dayOfWeek === 0) { // Domingo
-                nextUpdate.setDate(nextUpdate.getDate() + 1); // Lunes
-            } else if (dayOfWeek === 6) { // Sábado
-                nextUpdate.setDate(nextUpdate.getDate() + 2); // Lunes
-            }
-            
-            return nextUpdate.toLocaleString('es-ES', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        }
-        
         async function loadData() {
+            const contentEl = document.getElementById('content');
+            contentEl.innerHTML = `<div class="loading"><div>🔄 Cargando datos Minervini...</div></div>`;
+
             try {
-                // Intentar cargar desde data.json
-                const response = await fetch('data.json');
-                if (!response.ok) throw new Error('No se pudieron cargar los datos');
-                
+                const response = await fetch(`data.json?v=${new Date().getTime()}`);
+                if (!response.ok) {
+                    throw new Error(`Error de red: ${response.statusText}`);
+                }
                 const data = await response.json();
                 renderDashboard(data);
-                
             } catch (error) {
-                console.error('Error loading data:', error);
-                
-                // Fallback: mostrar datos de ejemplo para testing local
-                const fallbackData = {
-                    "timestamp": new Date().toISOString(),
-                    "market_date": new Date().toISOString().split('T')[0],
-                    "summary": {
-                        "total_analyzed": 183,
-                        "passed_filters": 0,
-                        "filter_rate": 0.0,
-                        "message": "Testing local - Sin datos reales"
-                    },
-                    "top_picks": [],
-                    "filter_criteria": {
-                        "volume_50d_min": "300,000",
-                        "price_vs_ma50": "0% a +5%",
-                        "ma200_trend": "Positiva",
-                        "last_day": "Positivo",
-                        "earnings": "Positivos último trimestre",
-                        "volume_boost": "+25% vs promedio 50d",
-                        "growth_flexible": "🚀 Ingresos >+15% O Beneficios >+25%",
-                        "relative_strength": "💪 Outperform SPY +3% (20d)"
-                    },
-                    "elimination_analysis": {
-                        "total_eliminated": 183,
-                        "elimination_rate": 100.0,
-                        "top_reasons": {
-                            "Underperform SPY: +1.8%": { "count": 78, "percentage": 42.6 },
-                            "Vol 50d bajo: 280000": { "count": 52, "percentage": 28.4 },
-                            "Debajo MA50: -1.2%": { "count": 45, "percentage": 24.6 },
-                            "Último día negativo": { "count": 34, "percentage": 18.6 },
-                            "Vol insuficiente: +18% vs 50d": { "count": 28, "percentage": 15.3 },
-                            "Muy arriba MA50: +6.2%": { "count": 22, "percentage": 12.0 },
-                            "MA200 tendencia negativa": { "count": 20, "percentage": 10.9 },
-                            "Sin datos earnings": { "count": 15, "percentage": 8.2 },
-                            "Beneficios Q negativos": { "count": 11, "percentage": 6.0 },
-                            "Sin datos SPY comparison": { "count": 6, "percentage": 3.3 }
-                        }
-                    },
-                    "statistics": {
-                        "message": "Datos de ejemplo para testing local",
-                        "suggestions": [
-                            "Para datos reales, sirve desde servidor HTTP",
-                            "Ejecuta: python -m http.server 8000",
-                            "Luego abre: http://localhost:8000",
-                            "8 filtros incluyen Relative Strength vs SPY",
-                            "Avatar estático con branding de 0t4c0n"
-                        ]
-                    }
-                };
-                
-                console.log('Usando datos de fallback para testing local');
-                renderDashboard(fallbackData);
-                
-                // Mostrar información adicional sobre el error
-                const errorInfo = document.createElement('div');
-                errorInfo.innerHTML = `
-                    <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px; color: #856404;">
-                        <strong>⚠️ Modo Testing Local</strong><br>
-                        <small>
-                            No se pueden cargar datos reales desde archivo local.<br>
-                            Avatar estático de 0t4c0n cargado correctamente.<br>
-                            Para datos reales:<br>
-                            1. <code>cd docs</code><br>
-                            2. <code>python -m http.server 8000</code><br>
-                            3. Abre <code>http://localhost:8000</code>
-                        </small>
-                    </div>
-                `;
-                document.getElementById('content').appendChild(errorInfo);
+                console.error('Error al cargar data.json:', error);
+                contentEl.innerHTML = `<div class="error">❌ No se pudieron cargar los datos. Revisa la consola para más detalles.</div>`;
             }
         }
-        
+
         function renderDashboard(data) {
             const contentEl = document.getElementById('content');
-            
-            // Resumen
+
             const summaryHtml = `
                 <div class="summary">
                     <div class="summary-grid">
                         <div class="summary-item">
-                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.total_analyzed}</div>
+                            <div class="summary-number">${data.summary.total_analyzed}</div>
                             <div class="summary-label">Analizadas</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.passed_filters}</div>
-                            <div class="summary-label">${data.summary.passed_filters > 0 ? 'Filtradas' : 'Sin filtrar'}</div>
+                            <div class="summary-number stage2">${data.summary.stage2_stocks}</div>
+                            <div class="summary-label">Stage 2</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-number ${data.summary.passed_filters > 0 ? 'success' : 'warning'}">${data.summary.filter_rate}%</div>
-                            <div class="summary-label">${data.summary.passed_filters > 0 ? 'Tasa Éxito' : 'Selectividad'}</div>
+                            <div class="summary-number score">${data.summary.avg_minervini_score.toFixed(1)}</div>
+                            <div class="summary-label">Score Avg</div>
+                        </div>
+                        <div class="summary-item">
+                            <div class="summary-number success">${data.summary.success_rate.toFixed(1)}%</div>
+                            <div class="summary-label">Éxito</div>
                         </div>
                     </div>
                 </div>
             `;
-            
-            // Top picks
+
             let topPicksHtml = `
                 <div class="top-picks">
-                    <div class="section-title">${data.summary.passed_filters > 0 ? 'Top 10 Recomendaciones' : 'Análisis del ' + data.market_date}</div>
+                    <div class="section-title">${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</div>
             `;
-            
+
             if (data.top_picks && data.top_picks.length > 0) {
                 data.top_picks.forEach(stock => {
-                    const dayChangeClass = stock.metrics.last_day_change >= 0 ? 'positive' : 'negative';
-                    const volumeBoostClass = stock.metrics.volume_boost >= 25 ? 'positive' : 'neutral';
-                    const ma50Class = stock.metrics.ma50_distance >= 0 && stock.metrics.ma50_distance <= 5 ? 'positive' : 'neutral';
+                    const passesAll = stock.stage_analysis.passes_all_filters;
+                    const recClass = stock.recommendation.toLowerCase().replace(/ /g, '-').replace(/[^\w-]/g, '');
+                    const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
+                    
+                    let indicatorsHtml = '';
+                    if (stock.technical_indicators.vcp_detected) indicatorsHtml += '<span class="indicator-badge">VCP</span>';
+                    if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
+                    if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
+                    if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
                     
                     topPicksHtml += `
-                        <div class="stock-card" style="position: relative;">
-                            <div class="rank">${stock.rank}</div>
+                        <div class="stock-card">
+                            ${perfectBadge}
+                            <div class="rank">#${stock.rank}</div>
                             <div class="stock-header">
                                 <div class="stock-info">
                                     <h3>${stock.symbol}</h3>
@@ -838,52 +534,26 @@
                                     <div class="sector">${stock.sector}</div>
                                 </div>
                                 <div class="stock-price">
-                                    <div class="price">$${stock.price}</div>
-                                    <div class="score">Score: ${stock.score}</div>
+                                    <div class="price">$${stock.price.toFixed(2)}</div>
+                                    <div class="minervini-score">Score: ${stock.minervini_score.toFixed(1)}</div>
                                 </div>
                             </div>
                             
-                            <div class="metrics">
-                                <div class="metric">
-                                    <div class="metric-value ${dayChangeClass}">
-                                        ${stock.metrics.last_day_change >= 0 ? '+' : ''}${stock.metrics.last_day_change}%
-                                    </div>
-                                    <div class="metric-label">Último día</div>
+                            <div class="stats-grid">
+                                <div class="stat-item">
+                                    <div class="stage-badge">${stock.stage_analysis.icon} ${stock.stage_analysis.stage}</div>
+                                    <div class="stat-label">Stage Analysis</div>
                                 </div>
-                                <div class="metric">
-                                    <div class="metric-value ${ma50Class}">
-                                        +${stock.metrics.ma50_distance}%
-                                    </div>
-                                    <div class="metric-label">vs MA50</div>
-                                </div>
-                                <div class="metric">
-                                    <div class="metric-value ${volumeBoostClass}">
-                                        +${stock.metrics.volume_boost}%
-                                    </div>
-                                    <div class="metric-label">Vol boost</div>
-                                </div>
-                                <div class="metric">
-                                    <div class="metric-value positive">
-                                        +${stock.metrics.relative_strength || 0}%
-                                    </div>
-                                    <div class="metric-label">vs SPY (20d)</div>
+                                <div class="stat-item">
+                                    <div class="stage-badge">${stock.relative_strength.strength_label}</div>
+                                    <div class="stat-label">RS Rating: ${stock.relative_strength.rs_rating.toFixed(1)}</div>
                                 </div>
                             </div>
+
+                            ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
                             
-                            <div class="growth-info">
-                                <div class="growth-badge">
-                                    🚀 ${stock.metrics.growth_type || 'Growth'}
-                                </div>
-                                <div class="volume-info">
-                                    📊 ${stock.metrics.volume_50d_millions}M vol 50d
-                                </div>
-                            </div>
-                            
-                            <div class="ma-levels">
-                                <div class="ma-level">MA10: ${stock.ma_levels.ma_10}</div>
-                                <div class="ma-level">MA21: ${stock.ma_levels.ma_21}</div>
-                                <div class="ma-level">MA50: ${stock.ma_levels.ma_50}</div>
-                                <div class="ma-level">MA200: ${stock.ma_levels.ma_200}</div>
+                            <div class="recommendation ${recClass}">
+                                ${stock.recommendation}
                             </div>
                         </div>
                     `;
@@ -891,156 +561,77 @@
             } else {
                 topPicksHtml += `
                     <div class="no-results">
-                        <div class="no-results-icon">🔍</div>
-                        <div class="no-results-title">Sin resultados para ${data.market_date}</div>
-                        <div class="no-results-subtitle">Ninguna acción pasó los 8 filtros técnicos hoy</div>
-                        <div class="no-results-details">
-                            <div class="filter-summary">
-                                <div class="filter-summary-title">📋 Filtros aplicados:</div>
-                                <div class="filter-list">
-                                    <div class="filter-item">✅ Volumen 50d ≥ 300K</div>
-                                    <div class="filter-item">✅ Precio: 0% a +6% vs MA50</div>
-                                    <div class="filter-item">✅ Tendencia MA200 positiva</div>
-                                    <div class="filter-item">✅ Último día positivo</div>
-                                    <div class="filter-item">✅ Beneficios trimestrales +</div>
-                                    <div class="filter-item">✅ Volumen +25% vs promedio</div>
-                                    <div class="filter-item">🚀 Ingresos +15% O Beneficios +25%</div>
-                                    <div class="filter-item">💪 Outperform SPY +3% (20d)</div>
+                        <div class="no-results-icon">🎯</div>
+                        <div class="no-results-title">Sin Candidatos Ideales Hoy</div>
+                        <div class="no-results-subtitle">Ninguna acción pasó los 11 filtros estrictos de Minervini.</div>
+                        <div class="minervini-criteria">
+                            <div class="criteria-title">📋 Metodología SEPA</div>
+                            <div class="criteria-section">
+                                <div class="criteria-subtitle">Filtros Técnicos</div>
+                                <div class="criteria-list">
+                                    ${data.minervini_criteria.technical_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
                                 </div>
                             </div>
-                            <div class="suggestions">
-                                <div class="suggestions-title">💡 Recomendaciones:</div>
-                                <div class="suggestion-item">• Revisa el análisis mañana</div>
-                                <div class="suggestion-item">• Los filtros son muy selectivos</div>
-                                <div class="suggestion-item">• Busca oportunidades en días volátiles</div>
+                            <div class="criteria-section">
+                                <div class="criteria-subtitle">Filtros Fundamentales</div>
+                                <div class="criteria-list">
+                                    ${data.minervini_criteria.fundamental_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
+                                </div>
                             </div>
-                        </div>
-                        <div class="retry-info">
-                            <small>Próxima actualización: ${getNextUpdateTime()}</small>
                         </div>
                     </div>
                 `;
-                
-                // Añadir análisis de eliminación incluso sin resultados
-                if (data.elimination_analysis && data.elimination_analysis.total_eliminated > 0) {
-                    topPicksHtml += `
-                        <div class="elimination-analysis">
-                            <div class="elimination-title">¿Por qué se eliminaron las acciones?</div>
-                            <div class="elimination-stats">
-                                <div class="elimination-stat">
-                                    <div class="elimination-stat-number">${data.elimination_analysis.total_eliminated}</div>
-                                    <div class="elimination-stat-label">Acciones Analizadas</div>
-                                </div>
-                                <div class="elimination-stat">
-                                    <div class="elimination-stat-number">${data.elimination_analysis.elimination_rate}%</div>
-                                    <div class="elimination-stat-label">Tasa de Eliminación</div>
-                                </div>
-                            </div>
-                            <div class="reasons-list">
-                    `;
-                    
-                    const maxPercentage = Math.max(...Object.values(data.elimination_analysis.top_reasons).map(r => r.percentage));
-                    const sortedReasons = Object.entries(data.elimination_analysis.top_reasons)
-                        .sort((a, b) => b[1].count - a[1].count)
-                        .slice(0, 5); // Solo top 5 para el caso sin resultados
-                    
-                    sortedReasons.forEach(([reason, stats]) => {
-                        const barWidth = (stats.percentage / maxPercentage) * 100;
-                        topPicksHtml += `
-                            <div class="reason-item">
-                                <div class="reason-text">${reason}</div>
-                                <div class="reason-stats">
-                                    <div class="reason-count">${stats.count}</div>
-                                    <div class="reason-percentage">${stats.percentage}%</div>
-                                </div>
-                                <div class="reason-bar">
-                                    <div class="reason-bar-fill" style="width: ${barWidth}%"></div>
-                                </div>
-                            </div>
-                        `;
-                    });
-                    
-                    topPicksHtml += '</div></div>';
-                }
             }
-            
+
             topPicksHtml += '</div>';
-            
-            // Análisis de eliminación
-            let eliminationHtml = '';
-            if (data.elimination_analysis && data.elimination_analysis.total_eliminated > 0) {
-                eliminationHtml = `
-                    <div class="elimination-analysis">
-                        <div class="elimination-title">Análisis de Eliminación - Top 10 Razones</div>
-                        <div class="elimination-stats">
-                            <div class="elimination-stat">
-                                <div class="elimination-stat-number">${data.elimination_analysis.total_eliminated}</div>
-                                <div class="elimination-stat-label">Acciones Eliminadas</div>
-                            </div>
-                            <div class="elimination-stat">
-                                <div class="elimination-stat-number">${data.elimination_analysis.elimination_rate}%</div>
-                                <div class="elimination-stat-label">Tasa de Eliminación</div>
-                            </div>
-                        </div>
-                        <div class="reasons-list">
+
+            let marketHealthHtml = '';
+            if (data.market_analysis && data.market_analysis.stage_distribution) {
+                const stageDist = data.market_analysis.stage_distribution;
+                const totalStocks = data.summary.total_analyzed;
+                
+                const stages = {
+                    "Stage 2 (Uptrend)": { color: "#16a34a", value: stageDist["Stage 2 (Uptrend)"] || 0 },
+                    "Stage 1/3 (Base/Top)": { color: "#f59e0b", value: (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0) },
+                    "Stage 4 (Decline)": { color: "#ef4444", value: stageDist["Stage 4 (Decline)"] || 0 },
+                    "Developing/Other": { color: "#6b7280", value: totalStocks - ((stageDist["Stage 2 (Uptrend)"] || 0) + (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 4 (Decline)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0)) }
+                };
+
+                marketHealthHtml = `
+                    <div class="market-health">
+                        <div class="section-title">🌡️ Salud del Mercado</div>
+                        <div class="chart-container">
                 `;
-                
-                // Encontrar el porcentaje máximo para normalizar las barras
-                const maxPercentage = Math.max(...Object.values(data.elimination_analysis.top_reasons).map(r => r.percentage));
-                
-                // Ordenar razones por count descendente
-                const sortedReasons = Object.entries(data.elimination_analysis.top_reasons)
-                    .sort((a, b) => b[1].count - a[1].count)
-                    .slice(0, 10);
-                
-                sortedReasons.forEach(([reason, stats]) => {
-                    const barWidth = (stats.percentage / maxPercentage) * 100;
-                    eliminationHtml += `
-                        <div class="reason-item">
-                            <div class="reason-text">${reason}</div>
-                            <div class="reason-stats">
-                                <div class="reason-count">${stats.count} acciones</div>
-                                <div class="reason-percentage">${stats.percentage}%</div>
-                            </div>
-                            <div class="reason-bar">
-                                <div class="reason-bar-fill" style="width: ${barWidth}%"></div>
-                            </div>
+
+                for (const [name, details] of Object.entries(stages)) {
+                    const percentage = totalStocks > 0 ? (details.value / totalStocks) * 100 : 0;
+                    marketHealthHtml += `
+                        <div class="chart-bar" style="height: ${percentage}%; background-color: ${details.color};">
+                            <div class="bar-value">${details.value}</div>
+                            <div class="bar-label">${name.split(' ')[1]}</div>
                         </div>
                     `;
-                });
-                
-                eliminationHtml += '</div></div>';
+                }
+
+                marketHealthHtml += `
+                        </div>
+                    </div>
+                `;
             }
-            
-            topPicksHtml += eliminationHtml;
-            
-            // Footer con última actualización
-            const updateTime = new Date(data.timestamp).toLocaleString('es-ES');
+
+
+            const updateTime = new Date(data.timestamp).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
             const footerHtml = `
                 <div class="last-update">
-                    📅 Última actualización: ${updateTime}<br>
-                    🗓️ Fecha de mercado: ${data.market_date}<br>
-                    <div class="signature">
-                        <small>🚀 Desarrollado por <strong>0t4c0n</strong> | Trading Bot Automatizado</small>
-                    </div>
+                    Última actualización: ${updateTime}<br>
+                    <small>Desarrollado por 0t4c0n 🦊 | Metodología SEPA de Mark Minervini</small>
                 </div>
             `;
-            
-            contentEl.innerHTML = summaryHtml + topPicksHtml + footerHtml;
+
+            contentEl.innerHTML = summaryHtml + marketHealthHtml + topPicksHtml + footerHtml;
         }
-        
-        // Cargar datos al iniciar
-        document.addEventListener('DOMContentLoaded', function() {
-            loadData();
-            loadProfileImage();
-        });
-        
-        // Auto-refresh cada 5 minutos si está activo
-        setInterval(() => {
-            if (document.hasFocus()) {
-                loadData();
-            }
-        }, 5 * 60 * 1000);
+
+        document.addEventListener('DOMContentLoaded', loadData);
     </script>
 </body>
 </html>

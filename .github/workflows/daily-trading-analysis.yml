@@ -1,5 +1,5 @@
 # .github/workflows/daily-trading-analysis.yml
-name: Análisis Diario de Trading Completo
+name: Minervini SEPA Analysis Diario
 
 on:
   schedule:
@@ -22,9 +22,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  trading-analysis:
+  minervini-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 horas máximo para procesar todas las acciones
+    timeout-minutes: 240  # 4 horas máximo para análisis Minervini completo
     
     # Configurar entorno para GitHub Pages
     environment:
@@ -35,36 +35,40 @@ jobs:
     - name: Checkout código
       uses: actions/checkout@v4
       
-    - name: Configurar Python
+    - name: Configurar Python y caché de dependencias
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
+        cache: 'pip'
         
     - name: Instalar dependencias
       run: |
         pip install --upgrade pip
-        pip install yfinance pandas requests
+        pip install -r requirements.txt
         
-    - name: Ejecutar análisis completo de trading
+    - name: Ejecutar análisis Minervini SEPA completo
       run: |
-        echo "Iniciando análisis completo de todas las acciones NYSE + NASDAQ..."
+        echo "Iniciando análisis Minervini SEPA de todas las acciones NYSE + NASDAQ..."
+        echo "Sistema: 11 filtros (8 técnicos + 3 fundamentales)"
+        echo "Metodología: SEPA de Mark Minervini"
         python script_automated.py
       env:
         PYTHONUNBUFFERED: 1  # Para ver output en tiempo real
         
-    - name: Crear JSON para dashboard
+    - name: Crear JSON para dashboard Minervini
       run: |
-        echo "Generando dashboard con datos completos..."
+        echo "Generando dashboard Minervini con scoring system..."
         python create_dashboard_data.py
         
     - name: Verificar archivos generados
+      id: verify_data_file
       run: |
-        echo "=== ARCHIVOS GENERADOS ==="
-        ls -la docs/
-        echo "=== CONTENIDO DATA.JSON (primeras líneas) ==="
-        head -20 docs/data.json
-        echo "=== ESTADÍSTICAS ==="
-        echo "Tamaño data.json: $(stat -c%s docs/data.json) bytes"
+        echo "Verificando la existencia y el contenido de docs/data.json..."
+        if [ ! -f docs/data.json ] || [ $(stat -c%s docs/data.json) -lt 200 ]; then
+          echo "::error::El archivo data.json no se generó correctamente o está casi vacío."
+          exit 1
+        fi
+        echo "✓ El archivo data.json se generó correctamente. Tamaño: $(stat -c%s docs/data.json) bytes."
     
     - name: Configurar Pages
       uses: actions/configure-pages@v4
@@ -77,3 +81,12 @@ jobs:
     - name: Desplegar a GitHub Pages
       id: deployment
       uses: actions/deploy-pages@v4
+      
+    - name: Resumen final Minervini
+      run: |
+        echo "=== MINERVINI SEPA ANALYSIS COMPLETADO ==="
+        echo "🎯 Metodología: SEPA de Mark Minervini"
+        echo "📊 Filtros aplicados: 11 (8 técnicos + 3 fundamentales)"
+        echo "🚀 Dashboard disponible en: ${{ steps.deployment.outputs.page_url }}"
+        echo "⏰ Próxima ejecución: Mañana a la misma hora"
+        echo "📱 Optimizado para móvil con Stage Analysis y RS Rating"

@@ -1,35 +1,63 @@
-# create_dashboard_data.py - VERSIÓN CON ANÁLISIS DE ELIMINACIÓN
+# create_dashboard_data.py - VERSIÓN MINERVINI SEPA CON SCORING
 import pandas as pd
+import numpy as np
 import json
 import glob
 import os
 from datetime import datetime
 
-def get_growth_type(row):
-    """Determina qué tipo de crecimiento cumple la acción"""
-    revenue_growth = row.get('Revenue_Growth_Positive', False)
-    earnings_growth = row.get('Earnings_Growth_Positive', False)
-    
-    if revenue_growth and earnings_growth:
-        return "Ingresos + Beneficios"
-    elif revenue_growth:
-        return "Ingresos"
-    elif earnings_growth:
-        return "Beneficios"
+def get_stage_icon(stage):
+    """Devuelve icono según Stage Analysis"""
+    if "Stage 2" in stage:
+        return "🚀"
+    elif "Stage 1" in stage or "Stage 3" in stage:
+        return "⏳"
+    elif "Stage 4" in stage:
+        return "📉"
     else:
-        return "N/A"
+        return "❓"
 
-def create_dashboard_data():
-    """Convierte los resultados del script en datos JSON para el dashboard"""
+def get_rs_strength_label(rs_rating):
+    """Devuelve etiqueta de fortaleza relativa"""
+    if rs_rating >= 90:
+        return "💪 Exceptional"
+    elif rs_rating >= 80:
+        return "🔥 Strong"
+    elif rs_rating >= 70:
+        return "✅ Good"
+    elif rs_rating >= 50:
+        return "⚠️ Average"
+    else:
+        return "❌ Weak"
+
+def get_minervini_recommendation(row):
+    """Devuelve recomendación basada en criterios Minervini"""
+    score = row.get('Minervini_Score', 0)
+    stage = row.get('Stage_Analysis', '')
+    passes_all = row.get('Passes_All_Filters', False)
     
-    print("=== CREATE DASHBOARD DATA - CON ANÁLISIS DE ELIMINACIÓN ===")
+    if passes_all and score >= 80:
+        return "🎯 BUY - Strong Stage 2"
+    elif passes_all and score >= 60:
+        return "✅ BUY - Good Setup"  
+    elif "Stage 2" in stage and score >= 70:
+        return "⚠️ WATCH - Developing"
+    elif "Stage 1" in stage or "Stage 3" in stage:
+        return "⏳ WAIT - Base/Top"
+    else:
+        return "❌ AVOID - Weak/Decline"
+
+def create_minervini_dashboard_data():
+    """Convierte los resultados Minervini en datos JSON para dashboard"""
+    
+    print("=== CREATE MINERVINI DASHBOARD DATA ===")
     
     try:
-        # Buscar el archivo de datos filtrados más reciente
-        filtered_files = glob.glob("*_FILTERED_ONLY_*.csv")
+        # Buscar archivos Minervini
+        stage2_files = glob.glob("*_STAGE2_ONLY_*.csv")
         all_files = glob.glob("*_ALL_DATA_*.csv")
         
-        print(f"Archivos FILTERED encontrados: {filtered_files}")
+        print(f"Archivos STAGE2 encontrados: {stage2_files}")
         print(f"Archivos ALL_DATA encontrados: {all_files}")
         
         if not all_files:
@@ -37,12 +65,12 @@ def create_dashboard_data():
             print("💡 Ejecuta primero: python script_automated.py")
             return False
         
-        # Obtener el archivo más reciente
+        # Obtener archivos más recientes
         latest_all = max(all_files, key=os.path.getctime)
-        latest_filtered = max(filtered_files, key=os.path.getctime) if filtered_files else None
+        latest_stage2 = max(stage2_files, key=os.path.getctime) if stage2_files else None
         
         print(f"Procesando archivo ALL_DATA: {latest_all}")
-        print(f"Procesando archivo FILTERED: {latest_filtered if latest_filtered else 'Ninguno'}")
+        print(f"Procesando archivo STAGE2: {latest_stage2 if latest_stage2 else 'Ninguno'}")
         
         # Leer datos
         try:
@@ -53,138 +81,158 @@ def create_dashboard_data():
             return False
             
         try:
-            filtered_df = pd.read_csv(latest_filtered) if latest_filtered else pd.DataFrame()
-            print(f"✓ FILTERED leído: {len(filtered_df)} filas")
+            stage2_df = pd.read_csv(latest_stage2) if latest_stage2 else pd.DataFrame()
+            print(f"✓ STAGE2 leído: {len(stage2_df)} filas")
         except Exception as e:
-            print(f"⚠️ Error leyendo FILTERED (usando DataFrame vacío): {e}")
-            filtered_df = pd.DataFrame()
+            print(f"⚠️ Error leyendo STAGE2 (usando DataFrame vacío): {e}")
+            stage2_df = pd.DataFrame()
         
-        # Crear estructura para el dashboard
+        # Crear estructura del dashboard Minervini
         dashboard_data = {
             "timestamp": datetime.now().isoformat(),
             "market_date": datetime.now().strftime("%Y-%m-%d"),
             "summary": {
                 "total_analyzed": len(all_df) if not all_df.empty else 0,
-                "passed_filters": len(filtered_df),
-                "filter_rate": round((len(filtered_df) / len(all_df) * 100), 1) if not all_df.empty and len(filtered_df) > 0 else 0,
-                "message": "Oportunidades encontradas" if len(filtered_df) > 0 else "Sin oportunidades hoy"
+                "stage2_stocks": len(stage2_df),
+                "success_rate": round((len(stage2_df) / len(all_df) * 100), 1) if not all_df.empty and len(stage2_df) > 0 else 0,
+                "avg_minervini_score": round(all_df['Minervini_Score'].mean(), 1) if not all_df.empty and 'Minervini_Score' in all_df.columns else 0,
+                "message": "Stage 2 stocks encontrados" if len(stage2_df) > 0 else "Sin Stage 2 stocks hoy"
             },
             "top_picks": [],
-            "market_trends": {},
-            "filter_criteria": {
-                "volume_50d_min": "300,000",
-                "price_vs_ma50": "0% a +6%",
-                "ma200_trend": "Positiva",
-                "last_day": "Positivo",
-                "earnings": "Positivos último trimestre",
-                "volume_boost": "+25% vs promedio 50d",
-                "growth_flexible": "🚀 Ingresos >+15% O Beneficios >+25%",
-                "relative_strength": "💪 Outperform SPY +3% (20d)"
+            "market_analysis": {},
+            "minervini_criteria": {
+                "technical_filters": [
+                    "Price > MA150 y MA200",
+                    "MA150 > MA200", 
+                    "MA200 trending up ≥1 mes",
+                    "Price > MA50 > MA150 > MA200",
+                    "Price ≥30% above 52w low",
+                    "Price within 25% of 52w high",
+                    "RS Rating ≥70",
+                    "VCP/Institutional accumulation"
+                ],
+                "fundamental_filters": [
+                    "Strong Earnings ≥25% YoY",
+                    "Revenue ≥20% + ROE ≥17%",
+                    "Institutional Evidence (5/8 criterios híbridos)"
+                ],
+                "scoring_system": {
+                    "stage_analysis": "0-40 pts (Stage 2 = 40)",
+                    "rs_rating": "0-30 pts (RS 90+ = 27+)",
+                    "position_52w": "0-20 pts (cerca high + lejos low)",
+                    "patterns": "0-10 pts (VCP + accumulation)"
+                }
             }
         }
         
-        print(f"Dashboard data estructura creada")
+        print(f"Dashboard Minervini estructura creada")
         print(f"Summary: {dashboard_data['summary']}")
         
-        if not filtered_df.empty:
-            print("Procesando acciones filtradas...")
-            # Calcular scores como en el script original
-            trend_scores = {
-                'Alcista fuerte': 100,
-                'Alcista': 80,
-                'Lateral/Mixta': 60,
-                'Bajista': 20,
-                'Bajista fuerte': 0
+        # Procesar datos para el ranking
+        if not all_df.empty and 'Minervini_Score' in all_df.columns:
+            print("Procesando ranking por Minervini Score...")
+            
+            # Ordenar por Minervini Score descendente
+            all_sorted = all_df.sort_values('Minervini_Score', ascending=False)
+            
+            # Top 15 para dashboard (mostraremos top 10, pero calculamos más por si hay empates)
+            top_stocks = all_sorted.head(15)
+            
+            for i, (_, row) in enumerate(top_stocks.head(10).iterrows()):
+                stage = row.get('Stage_Analysis', 'Unknown')
+                rs_rating = row.get('RS_Rating', 0)
+                score = row.get('Minervini_Score', 0)
+                
+                # Calcular métricas adicionales
+                dist_high = row.get('Distance_To_52w_High', 0)
+                dist_low = row.get('Distance_From_52w_Low', 0)
+                
+                # Usar .get con valores por defecto para limpiar el código y evitar errores
+                pick = {
+                    "rank": i + 1,
+                    "symbol": str(row['Symbol']),
+                    "company": str(row.get('Company_Name', 'N/A')[:30]),
+                    "sector": str(row.get('Sector', 'N/A')),
+                    "price": float(row.get('Current_Price', 0.0)),
+                    "minervini_score": float(row.get('Minervini_Score', 0.0)),
+                    "stage_analysis": {
+                        "stage": str(stage),
+                        "icon": get_stage_icon(stage),
+                        "passes_all_filters": bool(row.get('Passes_All_Filters', False))
+                    },
+                    "relative_strength": {
+                        "rs_rating": float(row.get('RS_Rating', 0.0)),
+                        "strength_label": get_rs_strength_label(float(row.get('RS_Rating', 0.0)))
+                    },
+                    "position_52w": {
+                        "distance_to_high": float(row.get('Distance_To_52w_High', 0.0)),
+                        "distance_from_low": float(row.get('Distance_From_52w_Low', 0.0)),
+                        "high_52w": float(row.get('High_52w', 0.0)),
+                        "low_52w": float(row.get('Low_52w', 0.0))
+                    },
+                    "technical_indicators": {
+                        "vcp_detected": bool(row.get('VCP_Detected', False)),
+                        "institutional_accumulation": bool(row.get('Institutional_Accumulation', False)),
+                        "institutional_evidence": bool(row.get('Institutional_Evidence', False)),
+                        "institutional_score": int(row.get('Institutional_Score', 0)),
+                        "volume_50d_millions": round(row.get('Volume_50d_Avg', 0) / 1_000_000, 1)
+                    },
+                    "fundamental_metrics": {
+                        "earnings_acceleration": bool(row.get('Earnings_Acceleration', False)),
+                        "roe_strong": bool(row.get('ROE_Strong', False)),
+                        "passes_technical": bool(row.get('Passes_Technical', False)),
+                        "passes_fundamental": bool(row.get('Passes_Fundamental', False))
+                    },
+                    "ma_levels": {
+                        "ma_50": float(row['MA_50']) if pd.notna(row.get('MA_50')) else 0.0,
+                        "ma_150": float(row['MA_150']) if pd.notna(row.get('MA_150')) else 0.0,
+                        "ma_200": float(row['MA_200']) if pd.notna(row.get('MA_200')) else 0.0
+                    },
+                    "recommendation": str(get_minervini_recommendation(row))
+                }
+                dashboard_data["top_picks"].append(pick)
+            
+            print(f"✓ {len(dashboard_data['top_picks'])} acciones añadidas a top_picks")
+        
+        # Análisis del mercado por Stage
+        if not all_df.empty and 'Stage_Analysis' in all_df.columns:
+            stage_distribution = all_df['Stage_Analysis'].value_counts().to_dict()
+            
+            # Calcular scores promedio por stage
+            stage_avg_scores = {}
+            for stage in stage_distribution.keys():
+                stage_stocks = all_df[all_df['Stage_Analysis'] == stage]
+                if not stage_stocks.empty and 'Minervini_Score' in stage_stocks.columns:
+                    stage_avg_scores[stage] = round(stage_stocks['Minervini_Score'].mean(), 1)
+                else:
+                    stage_avg_scores[stage] = 0
+            
+            dashboard_data["market_analysis"] = {
+                "stage_distribution": stage_distribution,
+                "stage_avg_scores": stage_avg_scores,
+                "total_stage2": stage_distribution.get("Stage 2 (Uptrend)", 0) + stage_distribution.get("Stage 2 (Developing)", 0),
+                "market_health": "Strong" if len(stage2_df) > 0 else "Weak"
             }
             
-            try:
-                filtered_df['Trend_Score'] = filtered_df['MA_Trend'].map(trend_scores).fillna(50)
-                
-                # Normalizar scores
-                if filtered_df['Volume_Ratio_vs_50d'].max() > 0:
-                    filtered_df['Volume_Score'] = (filtered_df['Volume_Ratio_vs_50d'] / filtered_df['Volume_Ratio_vs_50d'].max() * 50).fillna(0)
-                else:
-                    filtered_df['Volume_Score'] = 0
-                    
-                if filtered_df['Last_Day_Change_Pct'].max() > 0:
-                    filtered_df['Day_Change_Score'] = (filtered_df['Last_Day_Change_Pct'] / filtered_df['Last_Day_Change_Pct'].max() * 30).fillna(0)
-                else:
-                    filtered_df['Day_Change_Score'] = 0
-                    
-                filtered_df['MA50_Score'] = filtered_df['Price_vs_MA50_Pct'].apply(
-                    lambda x: 20 - abs(x - 2.5) * 4 if pd.notna(x) else 0
-                )
-                
-                filtered_df['Total_Score'] = (
-                    filtered_df['Trend_Score'] + 
-                    filtered_df['Volume_Score'] + 
-                    filtered_df['Day_Change_Score'] + 
-                    filtered_df['MA50_Score']
-                )
-                
-                # Ordenar por score
-                filtered_sorted = filtered_df.sort_values('Total_Score', ascending=False)
-                
-                # Top 10 para el dashboard
-                for i, (_, row) in enumerate(filtered_sorted.head(10).iterrows()):
-                    vol_ratio_pct = ((row['Volume_Ratio_vs_50d'] - 1) * 100) if pd.notna(row['Volume_Ratio_vs_50d']) else 0
-                    
-                    pick = {
-                        "rank": i + 1,
-                        "symbol": row['Symbol'],
-                        "company": row['Company_Name'][:30] if pd.notna(row['Company_Name']) else 'N/A',
-                        "sector": row['Sector'] if pd.notna(row['Sector']) else 'N/A',
-                        "price": round(row['Current_Price'], 2) if pd.notna(row['Current_Price']) else 0,
-                        "score": round(row['Total_Score'], 1),
-                        "metrics": {
-                            "ma50_distance": round(row['Price_vs_MA50_Pct'], 1) if pd.notna(row['Price_vs_MA50_Pct']) else 0,
-                            "last_day_change": round(row['Last_Day_Change_Pct'], 1) if pd.notna(row['Last_Day_Change_Pct']) else 0,
-                            "volume_boost": round(vol_ratio_pct, 0),
-                            "trend": row['MA_Trend'] if pd.notna(row['MA_Trend']) else 'N/A',
-                            "volume_50d_millions": round(row['Volume_50d_Avg'] / 1000000, 1) if pd.notna(row['Volume_50d_Avg']) else 0,
-                            "relative_strength": round(row['Relative_Strength_Value'], 1) if pd.notna(row['Relative_Strength_Value']) else 0,
-                            "growth_type": get_growth_type(row)
-                        },
-                        "ma_levels": {
-                            "ma_10": round(row['MA_10'], 2) if pd.notna(row['MA_10']) else 0,
-                            "ma_21": round(row['MA_21'], 2) if pd.notna(row['MA_21']) else 0,
-                            "ma_50": round(row['MA_50'], 2) if pd.notna(row['MA_50']) else 0,
-                            "ma_200": round(row['MA_200'], 2) if pd.notna(row['MA_200']) else 0
-                        }
-                    }
-                    dashboard_data["top_picks"].append(pick)
-                
-                print(f"✓ {len(dashboard_data['top_picks'])} acciones añadidas a top_picks")
-                
-                # Tendencias del mercado
-                if 'MA_Trend' in filtered_df.columns:
-                    trend_counts = filtered_df['MA_Trend'].value_counts().to_dict()
-                    dashboard_data["market_trends"] = {
-                        trend: int(count) for trend, count in trend_counts.items()
-                    }
-                    print(f"✓ Tendencias del mercado calculadas: {dashboard_data['market_trends']}")
-                
-            except Exception as e:
-                print(f"⚠️ Error procesando acciones filtradas: {e}")
-                print("Continuando con dashboard básico...")
+            print(f"✓ Análisis de mercado por stages calculado")
         
-        # AÑADIR ANÁLISIS DE RAZONES DE ELIMINACIÓN
+        # Análisis de eliminación Minervini
         dashboard_data["elimination_analysis"] = {
-            "total_eliminated": len(all_df) - len(filtered_df),
-            "elimination_rate": round(((len(all_df) - len(filtered_df)) / len(all_df) * 100), 1) if len(all_df) > 0 else 0,
+            "total_eliminated": len(all_df) - len(stage2_df),
+            "elimination_rate": round(((len(all_df) - len(stage2_df)) / len(all_df) * 100), 1) if len(all_df) > 0 else 0,
             "top_reasons": {}
         }
         
-        if len(all_df) > len(filtered_df):  # Si hay acciones eliminadas
+        if len(all_df) > len(stage2_df):
             filter_reasons_count = {}
             total_stocks = len(all_df)
             
             for _, row in all_df.iterrows():
-                if not row['Passes_Filters']:
-                    reasons = str(row['Filter_Reasons']).split(';')
+                if not row.get('Passes_All_Filters', False):
+                    reasons = str(row.get('Filter_Reasons', '')).split(';')
                     for reason in reasons:
                         reason = reason.strip()
-                        if reason and reason != "✅ PASA TODOS LOS FILTROS" and reason != "nan":
+                        if reason and reason != "✅ PASA TODOS LOS FILTROS MINERVINI" and reason != "nan":
                             filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
             
             # Top 10 razones para el dashboard
@@ -195,74 +243,117 @@ def create_dashboard_data():
                     "percentage": percentage
                 }
             
-            print(f"✓ Análisis de eliminación: {len(filter_reasons_count)} razones diferentes")
+            print(f"✓ Análisis de eliminación Minervini: {len(filter_reasons_count)} razones diferentes")
         
-        # Estadísticas adicionales
-        if filtered_df.empty:
-            dashboard_data["statistics"] = {
-                "message": "Sin acciones que pasen todos los filtros",
-                "total_analyzed": len(all_df) if not all_df.empty else 0,
-                "suggestions": [
-                    "Los 8 filtros son muy selectivos para garantizar calidad",
-                    "Incluye Relative Strength vs SPY para outperformance",
-                    "Crecimiento flexible: Ingresos >15% O Beneficios >25%",
-                    "Mercados volátiles pueden tener días sin oportunidades claras",
-                    "Revisa el análisis mañana para nuevas oportunidades",
-                    "Los filtros priorizan empresas con momentum superior al mercado"
-                ]
-            }
-            print("✓ Estadísticas para dashboard sin resultados")
-        else:
-            try:
-                dashboard_data["statistics"] = {
-                    "avg_volume_50d_millions": round(filtered_df['Volume_50d_Avg'].mean() / 1000000, 1),
-                    "avg_volume_ratio": round(filtered_df['Volume_Ratio_vs_50d'].mean(), 2),
-                    "avg_price_vs_ma50": round(filtered_df['Price_vs_MA50_Pct'].mean(), 1),
-                    "avg_last_day_change": round(filtered_df['Last_Day_Change_Pct'].mean(), 1),
-                    "avg_relative_strength": round(filtered_df['Relative_Strength_Value'].mean(), 1) if 'Relative_Strength_Value' in filtered_df.columns else 0,
-                    "price_range_vs_ma50": {
-                        "min": round(filtered_df['Price_vs_MA50_Pct'].min(), 1),
-                        "max": round(filtered_df['Price_vs_MA50_Pct'].max(), 1)
+        # Estadísticas Minervini específicas
+        if not all_df.empty:
+            # Estadísticas de RS Rating
+            rs_stats = {}
+            if 'RS_Rating' in all_df.columns:
+                rs_data = all_df['RS_Rating'].dropna()
+                if not rs_data.empty:
+                    rs_stats = {
+                        "avg_rs_rating": round(rs_data.mean(), 1),
+                        "rs_above_70": len(rs_data[rs_data >= 70]),
+                        "rs_above_80": len(rs_data[rs_data >= 80]),
+                        "rs_above_90": len(rs_data[rs_data >= 90])
                     }
+            
+            # Estadísticas de posición 52w
+            position_stats = {}
+            if 'Distance_To_52w_High' in all_df.columns:
+                high_data = all_df['Distance_To_52w_High'].dropna()
+                low_data = all_df['Distance_From_52w_Low'].dropna()
+                if not high_data.empty and not low_data.empty:
+                    position_stats = {
+                        "avg_distance_to_high": round(high_data.mean(), 1),
+                        "avg_distance_from_low": round(low_data.mean(), 1),
+                        "near_highs_25pct": len(high_data[high_data <= 25]),
+                        "above_low_30pct": len(low_data[low_data >= 30])
+                    }
+            
+            dashboard_data["minervini_statistics"] = {
+                "rs_rating_stats": rs_stats,
+                "position_52w_stats": position_stats,
+                "pattern_detection": {
+                    "vcp_detected": all_df['VCP_Detected'].sum() if 'VCP_Detected' in all_df.columns else 0,
+                    "institutional_accumulation": all_df['Institutional_Accumulation'].sum() if 'Institutional_Accumulation' in all_df.columns else 0,
+                    "institutional_evidence": all_df['Institutional_Evidence'].sum() if 'Institutional_Evidence' in all_df.columns else 0,
+                    "avg_institutional_score": round(all_df['Institutional_Score'].mean(), 1) if 'Institutional_Score' in all_df.columns else 0
+                },
+                "score_distribution": {
+                    "score_80_plus": len(all_df[all_df['Minervini_Score'] >= 80]) if 'Minervini_Score' in all_df.columns else 0,
+                    "score_60_79": len(all_df[(all_df['Minervini_Score'] >= 60) & (all_df['Minervini_Score'] < 80)]) if 'Minervini_Score' in all_df.columns else 0,
+                    "score_40_59": len(all_df[(all_df['Minervini_Score'] >= 40) & (all_df['Minervini_Score'] < 60)]) if 'Minervini_Score' in all_df.columns else 0,
+                    "score_below_40": len(all_df[all_df['Minervini_Score'] < 40]) if 'Minervini_Score' in all_df.columns else 0
                 }
-                print("✓ Estadísticas completas calculadas")
-            except Exception as e:
-                print(f"⚠️ Error calculando estadísticas: {e}")
+            }
+            
+            print("✓ Estadísticas Minervini específicas calculadas")
         
-        # Crear directorio docs si no existe
+        # Crear directorio docs
         print("Creando directorio docs...")
         os.makedirs('docs', exist_ok=True)
         print("✓ Directorio docs creado/verificado")
         
-        # Guardar JSON
+        # Guardar JSON con conversión de tipos numpy
         json_path = 'docs/data.json'
-        print(f"Guardando JSON en: {json_path}")
+        print(f"Guardando JSON Minervini en: {json_path}")
+        
+        def convert_numpy_types(obj):
+            """Convierte tipos numpy/pandas a tipos JSON serializables"""
+            import numpy as np
+            if isinstance(obj, dict):
+                return {key: convert_numpy_types(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif pd.isna(obj):
+                return None
+            else:
+                return obj
         
         try:
+            # Convertir todos los tipos numpy antes de serializar
+            dashboard_data_clean = convert_numpy_types(dashboard_data)
+            
             with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(dashboard_data, f, indent=2, ensure_ascii=False)
+                json.dump(dashboard_data_clean, f, indent=2, ensure_ascii=False)
             
-            print(f"✅ Dashboard data creado: {json_path}")
+            print(f"✅ Dashboard Minervini creado: {json_path}")
             
-            # Verificar que se creó
+            # Verificar archivo
             if os.path.exists(json_path):
                 size = os.path.getsize(json_path)
                 print(f"✅ Archivo verificado - Tamaño: {size} bytes")
                 
-                # Mostrar resumen del contenido
-                print(f"📊 Resumen del dashboard:")
+                # Mostrar resumen del contenido Minervini
+                print(f"📊 Resumen del dashboard Minervini:")
                 print(f"   - Total analizadas: {dashboard_data['summary']['total_analyzed']}")
-                print(f"   - Acciones filtradas: {dashboard_data['summary']['passed_filters']}")
+                print(f"   - Stage 2 stocks: {dashboard_data['summary']['stage2_stocks']}")
+                print(f"   - Tasa de éxito: {dashboard_data['summary']['success_rate']}%")
+                print(f"   - Score promedio: {dashboard_data['summary']['avg_minervini_score']}")
                 print(f"   - Top picks: {len(dashboard_data['top_picks'])}")
-                print(f"   - Acciones eliminadas: {dashboard_data['elimination_analysis']['total_eliminated']}")
-                print(f"   - Razones de eliminación: {len(dashboard_data['elimination_analysis']['top_reasons'])}")
+                print(f"   - Eliminadas: {dashboard_data['elimination_analysis']['total_eliminated']}")
+                print(f"   - Razones eliminación: {len(dashboard_data['elimination_analysis']['top_reasons'])}")
+                
+                # Mostrar distribución por stages
+                if dashboard_data.get('market_analysis', {}).get('stage_distribution'):
+                    print(f"   - Distribución por Stage:")
+                    for stage, count in dashboard_data['market_analysis']['stage_distribution'].items():
+                        print(f"     * {stage}: {count}")
                 
             else:
                 print("❌ El archivo no se pudo verificar")
                 return False
                 
         except Exception as e:
-            print(f"❌ Error guardando JSON: {e}")
+            print(f"❌ Error guardando JSON Minervini: {e}")
             return False
         
         # Crear archivo de última actualización
@@ -273,7 +364,7 @@ def create_dashboard_data():
         except Exception as e:
             print(f"⚠️ Error creando last_update.txt: {e}")
         
-        print(f"🎉 Dashboard completamente generado con análisis de eliminación!")
+        print(f"🎉 Dashboard Minervini SEPA completamente generado!")
         return True
         
     except Exception as e:
@@ -283,9 +374,10 @@ def create_dashboard_data():
         return False
 
 if __name__ == "__main__":
-    success = create_dashboard_data()
+    success = create_minervini_dashboard_data()
     if success:
-        print("\n✅ SUCCESS: Dashboard creado correctamente")
+        print("\n✅ SUCCESS: Dashboard Minervini creado correctamente")
         print("📱 Abre docs/index.html en tu navegador")
+        print("🎯 Sistema basado en metodología SEPA de Mark Minervini")
     else:
         print("\n❌ FAILED: Revisar errores arriba")
