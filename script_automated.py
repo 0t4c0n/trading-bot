@@ -328,6 +328,12 @@ class MinerviniStockScreener:
             if analysis.get('roe_strong', False):
                 score += 2
                 
+            # Penalizar fuertemente si falla un filtro fundamental crítico.
+            # Esto ajusta el ranking para que las acciones que fallan en fundamentales (ej. sin beneficios)
+            # aparezcan más abajo que aquellas con solo fallos técnicos menores.
+            if analysis.get('is_fundamental_failure', False):
+                score *= 0.6 # Reducir el score en un 40%
+                
             return min(round(score, 1), 100)
             
         except Exception as e:
@@ -374,7 +380,13 @@ class MinerviniStockScreener:
                 result['stage_analysis'] = stage
                 result['filter_reasons'] = [reason]
                 result['passes_minervini_technical'] = passes_technical
-                analysis_for_scoring = {'stage_analysis': stage, 'rs_rating': rs_rating}
+                # Detectar si el fallo es fundamental (ocurre después de pasar los filtros técnicos)
+                is_fundamental_failure = passes_technical
+                analysis_for_scoring = {
+                    'stage_analysis': stage,
+                    'rs_rating': rs_rating,
+                    'is_fundamental_failure': is_fundamental_failure
+                }
                 result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
                 return result
 

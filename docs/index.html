@@ -99,6 +99,43 @@
             font-weight: 500;
         }
         
+        .breadth-value.strong {
+            color: #16a34a;
+        }
+        
+        .breadth-value.neutral {
+            color: #d97706;
+        }
+        
+        .breadth-value.weak {
+            color: #b91c1c;
+        }
+
+        .market-breadth {
+            margin-bottom: 15px;
+        }
+
+        .breadth-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .breadth-item {
+            background: #ffffff;
+            padding: 12px 5px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            text-align: center;
+        }
+
+        .breadth-value {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 4px;
+        }
+
         .top-picks {
             padding: 0;
         }
@@ -130,6 +167,11 @@
             border-color: #3b82f6;
         }
         
+        /* Añade espacio a la derecha para el precio solo si la tarjeta tiene la insignia "All Filters" */
+        .stock-card.has-badge .stock-price {
+            padding-right: 95px;
+        }
+        
         .stock-header {
             display: flex;
             justify-content: space-between;
@@ -137,6 +179,11 @@
             margin-bottom: 12px;
         }
         
+        /* Añade padding a la izquierda para dejar espacio al número del ranking */
+        .stock-info {
+            padding-left: 30px;
+        }
+
         .stock-info h3 {
             font-size: 1.2em;
             font-weight: 700;
@@ -158,6 +205,7 @@
             text-align: right;
             flex-shrink: 0;
             margin-left: 10px;
+            /* El padding-right se añade dinámicamente con la clase .has-badge */
         }
         
         .price {
@@ -251,8 +299,8 @@
         
         .rank {
             position: absolute;
-            top: 10px;
-            left: -8px;
+            top: 15px; /* Alineado con el contenido */
+            left: 15px;  /* Dentro de la tarjeta */
             background: #2563eb;
             color: white;
             padding: 3px 8px;
@@ -506,6 +554,40 @@
                 </div>
             `;
 
+            function getBreadthClass(value, thresholds) {
+                if (value >= thresholds.strong) return 'strong';
+                if (value >= thresholds.neutral) return 'neutral';
+                return 'weak';
+            }
+
+            let marketBreadthHtml = '';
+            const marketAnalysis = data.market_analysis;
+            if (marketAnalysis && marketAnalysis.pct_above_ma200 !== undefined) {
+                const maClass = getBreadthClass(marketAnalysis.pct_above_ma200, { strong: 60, neutral: 40 });
+                const rsClass = getBreadthClass(marketAnalysis.pct_rs_strong, { strong: 50, neutral: 30 });
+                const scoreClass = getBreadthClass(data.summary.avg_minervini_score, { strong: 60, neutral: 40 });
+
+                marketBreadthHtml = `
+                    <div class="market-breadth">
+                        <div class="section-title">🌡️ Amplitud del Mercado</div>
+                        <div class="breadth-grid">
+                            <div class="breadth-item">
+                                <div class="breadth-value ${maClass}">${marketAnalysis.pct_above_ma200.toFixed(1)}%</div>
+                                <div class="summary-label">> MA200</div>
+                            </div>
+                            <div class="breadth-item">
+                                <div class="breadth-value ${rsClass}">${marketAnalysis.pct_rs_strong.toFixed(1)}%</div>
+                                <div class="summary-label">RS > 70</div>
+                            </div>
+                            <div class="breadth-item">
+                                <div class="breadth-value ${scoreClass}">${data.summary.avg_minervini_score.toFixed(1)}</div>
+                                <div class="summary-label">Score Avg</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
             let topPicksHtml = `
                 <div class="top-picks">
                     <div class="section-title">${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</div>
@@ -514,6 +596,7 @@
             if (data.top_picks && data.top_picks.length > 0) {
                 data.top_picks.forEach(stock => {
                     const passesAll = stock.stage_analysis.passes_all_filters;
+                    const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
                     const recClass = stock.recommendation.toLowerCase().replace(/ /g, '-').replace(/[^\w-]/g, '');
                     const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
                     
@@ -524,7 +607,7 @@
                     if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
                     
                     topPicksHtml += `
-                        <div class="stock-card">
+                        <div class="stock-card ${cardClass}">
                             ${perfectBadge}
                             <div class="rank">#${stock.rank}</div>
                             <div class="stock-header">
@@ -593,7 +676,7 @@
                 const stages = {
                     "Stage 2 (Uptrend)": { color: "#16a34a", value: stageDist["Stage 2 (Uptrend)"] || 0 },
                     "Stage 1/3 (Base/Top)": { color: "#f59e0b", value: (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0) },
-                    "Stage 4 (Decline)": { color: "#ef4444", value: stageDist["Stage 4 (Decline)"] || 0 },
+                    "Stage 4 (Decline)": { color: "#ef4444", value: stageDist["Stage 4 (Decline)"] || 0 }, // Combina Stage 1 y 3
                     "Developing/Other": { color: "#6b7280", value: totalStocks - ((stageDist["Stage 2 (Uptrend)"] || 0) + (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 4 (Decline)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0)) }
                 };
 
@@ -628,7 +711,7 @@
                 </div>
             `;
 
-            contentEl.innerHTML = summaryHtml + marketHealthHtml + topPicksHtml + footerHtml;
+            contentEl.innerHTML = summaryHtml + marketBreadthHtml + marketHealthHtml + topPicksHtml + footerHtml;
         }
 
         document.addEventListener('DOMContentLoaded', loadData);
