@@ -447,6 +447,17 @@ class MinerviniStockScreener:
             result['passes_minervini_technical'] = True
             result['stage_analysis'] = stage_analysis
 
+            # FILTRO FUNDAMENTAL CERO: BENEFICIOS POSITIVOS (NO NEGOCIABLE)
+            # Descartar totalmente si no hay beneficios, como solicitado por el usuario.
+            if ticker_info:
+                net_income = ticker_info.get('netIncomeToCommon')
+                # Si net_income es None, no podemos estar seguros, así que lo dejamos pasar.
+                # Si es 0 o negativo, lo descartamos.
+                if net_income is not None and net_income <= 0:
+                    print(f"    - {symbol} Descartado: Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)")
+                    # Devolver None indica a la función que lo llama que descarte esta acción por completo.
+                    return None
+
             # --- EMBUDO DE FILTRADO FUNDAMENTAL (EARLY EXIT) ---
 
             # FILTRO 6: EARNINGS
@@ -577,13 +588,28 @@ class MinerviniStockScreener:
                                 retry_count += 1
                                 continue
                             else:
-                                print(f"⚠️  {symbol} - No se pudo obtener .info (fundamentales), continuando sin ellos. Error: {info_error}")
-                                ticker_info = {}
-                                company_info = {'name': 'N/A', 'sector': 'N/A', 'industry': 'N/A', 'market_cap': 'N/A'}
+                                # CAMBIO CLAVE: Descartar si .info falla por otra razón
+                                print(f"✗ {symbol} - Descartado: No se pudo obtener .info (fundamentales). Error: {info_error}")
+                                failed_symbols.append(symbol)
+                                success = True # Marcar como "manejado" para salir del bucle de reintentos
+                                continue # Saltar al siguiente símbolo en el lote
+
+                        # Verificación adicional: a veces .info devuelve un dict vacío sin error
+                        if not ticker_info or 'sector' not in ticker_info:
+                            print(f"✗ {symbol} - Descartado: .info devuelto vacío o incompleto.")
+                            failed_symbols.append(symbol)
+                            continue
                         
                         stock_rs_rating = rs_ratings.get(symbol)
                         minervini_analysis = self.get_minervini_analysis(hist_with_ma, stock_rs_rating, ticker_info, symbol)
                         
+                        # Si el análisis devuelve None, es porque la acción fue descartada (ej. beneficios negativos)
+                        if minervini_analysis is None:
+                            success = True # Marcamos como éxito para no reintentar
+                            # Al poner success=True, el bucle while terminará y pasará al siguiente símbolo.
+                            # No se añadirá a stock_data.
+                            continue
+
                         stock_data[symbol] = {
                             'data': hist_with_ma,
                             'minervini_analysis': minervini_analysis,
@@ -624,7 +650,7 @@ class MinerviniStockScreener:
                             break
                     else:
                         failed_symbols.append(symbol)
-                        print(f"✗ {symbol} - Error: {e}")
+                        print(f"✗ {symbol} - Error en el bucle principal de procesamiento: {e}")
                         break
                 
                 if success or retry_count >= max_retries:

@@ -22,7 +22,7 @@ Sistema automatizado basado en la **metodología SEPA de Mark Minervini** que an
 8. **VCP/Institutional accumulation** - Patrones de acumulación
 
 **3 Criterios Fundamentales Obligatorios:**
-1. **Strong Earnings ≥25% YoY** - Crecimiento de beneficios
+1. **Beneficios Positivos y Crecimiento (Earnings)**: Se requiere que la empresa tenga beneficios netos positivos (`Net Income > 0`). Además, se busca un crecimiento de beneficios interanual (YoY) de al menos un 25%.
 2. **Revenue ≥20% + ROE ≥17%** - Crecimiento y rentabilidad
 3. **Institutional Evidence (Híbrido)** - Sistema de 8 criterios:
    - ✅ Acumulación por volumen/precio (0-2 pts)
