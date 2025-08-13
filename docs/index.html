@@ -262,6 +262,13 @@
             font-size: 0.75em;
             font-weight: 600;
         }
+
+        .indicator-badge.vcp-badge {
+            background: #dcfce7; /* Verde claro */
+            color: #166534; /* Verde oscuro */
+            border: 1px solid #86efac;
+            font-weight: 700;
+        }
         
         .recommendation {
             margin-top: 12px;
@@ -601,7 +608,7 @@
                     const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
                     
                     let indicatorsHtml = '';
-                    if (stock.technical_indicators.vcp_detected) indicatorsHtml += '<span class="indicator-badge">VCP</span>';
+                    if (stock.technical_indicators.vcp_detected) indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
                     if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
                     if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
                     if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';

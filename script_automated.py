@@ -319,8 +319,9 @@ class MinerviniStockScreener:
                 score += high_score + low_score
             
             # 4. Technical Patterns & Volume (0-10 points) - BONIFICACIONES
+            # Aumentamos la bonificación por VCP para darle más importancia
             if analysis.get('vcp_detected', False):
-                score += 3
+                score += 5
             if analysis.get('institutional_accumulation', False):
                 score += 3
             if analysis.get('earnings_acceleration', False):
