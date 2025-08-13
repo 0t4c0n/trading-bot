@@ -598,7 +598,8 @@ class MinerviniStockScreener:
                         if not ticker_info or 'sector' not in ticker_info:
                             print(f"✗ {symbol} - Descartado: .info devuelto vacío o incompleto.")
                             failed_symbols.append(symbol)
-                            continue
+                            success = True # BUG FIX: Marcar como manejado para salir del bucle de reintentos
+                            continue # Saltar al siguiente símbolo
                         
                         stock_rs_rating = rs_ratings.get(symbol)
                         minervini_analysis = self.get_minervini_analysis(hist_with_ma, stock_rs_rating, ticker_info, symbol)
