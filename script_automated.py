@@ -96,8 +96,10 @@ class MinerviniStockScreener:
         return all_backup
     
     def calculate_moving_averages(self, df):
-        """Calcula las medias móviles de 50, 150 y 200 días (Minervini)"""
+        """Calcula las medias móviles de 10, 21, 50, 150 y 200 días"""
         try:
+            df['MA_10'] = df['Close'].rolling(window=10).mean()
+            df['MA_21'] = df['Close'].rolling(window=21).mean()
             df['MA_50'] = df['Close'].rolling(window=50).mean()
             df['MA_150'] = df['Close'].rolling(window=150).mean()
             df['MA_200'] = df['Close'].rolling(window=200).mean()
@@ -132,30 +134,37 @@ class MinerviniStockScreener:
             # 1. CONTEXTO: Cerca del máximo de 52 semanas
             price_near_high = (high_52w - current_price) / high_52w <= 0.15  # Dentro del 15% del máximo
             if not price_near_high:
-                return {'vcp_detected': False, 'details': ['No está cerca del máximo 52w']}
+                return {'vcp_detected': False, 'is_in_pivot': False, 'details': ['No está cerca del máximo 52w']}
 
-            # 2. CONTRACCIÓN DE VOLATILIDAD: Rango de precios se estrecha
+            # 2. CONTRACCIÓN DE VOLATILIDAD (VCP - Ingrediente #1): El resorte se comprime.
             # Volatilidad en los últimos 10 días vs los últimos 50 días
             vol_10d = (df['High'].tail(10).max() - df['Low'].tail(10).min()) / df['Close'].tail(10).mean()
             vol_50d = (df['High'].tail(50).max() - df['Low'].tail(50).min()) / df['Close'].tail(50).mean()
             
             volatility_tightening = vol_10d < (vol_50d * 0.6) # La volatilidad reciente es <60% de la anterior
             
-            # 3. SEQUÍA DE VOLUMEN: El volumen disminuye en la contracción final
+            # 3. SEQUÍA DE VOLUMEN (VCP - Ingrediente #2): Los vendedores se agotan.
             volume_10d_avg = df['Volume'].tail(10).mean()
             volume_dry_up = volume_10d_avg < (volume_50d_avg * 0.7) # Volumen reciente <70% de la media
             
-            # 4. "CHEAT" PIVOT: El precio se mueve lateralmente en un rango muy estrecho
+            # 4. PUNTO PIVOTE (La calma antes de la explosión): Rango de precio ultra-estrecho.
+            # El precio se mueve lateralmente en un rango muy ajustado en los últimos días.
             price_range_5d = (df['High'].tail(5).max() - df['Low'].tail(5).min()) / current_price
-            is_in_pivot = price_range_5d < 0.03 # Rango de menos del 3% en los últimos 5 días
+            is_in_tight_range = price_range_5d < 0.03 # Rango de menos del 3% en los últimos 5 días
 
-            # SCORING: Se considera VCP si hay contracción de volatilidad Y sequía de volumen
+            # --- LÓGICA DE DECISIÓN ---
+            # Se considera que hay un patrón VCP general si la volatilidad se contrae Y el volumen se seca.
             vcp_detected = volatility_tightening and volume_dry_up
+            
+            # Se considera que está en un PUNTO PIVOTE accionable si se cumplen las condiciones de VCP
+            # Y ADEMÁS el precio está en ese rango ultra-estrecho. Esta es la señal de mayor calidad.
+            is_in_pivot = vcp_detected and is_in_tight_range
             
             details = []
             if volatility_tightening: details.append(f"Volatilidad contraída (10d: {vol_10d:.2%}, 50d: {vol_50d:.2%})")
             if volume_dry_up: details.append(f"Volumen seco (10d avg: {volume_10d_avg/1e6:.2f}M vs 50d: {volume_50d_avg/1e6:.2f}M)")
-            if is_in_pivot: details.append("En zona de pivot (<3% rango)")
+            if is_in_tight_range: details.append("Rango estrecho (<3% en 5d)")
+            if is_in_pivot: details.append("✅ SEÑAL PIVOTE ACTIVA")
 
             return {
                 'vcp_detected': vcp_detected,
@@ -167,7 +176,7 @@ class MinerviniStockScreener:
             
         except Exception as e:
             print(f"Error analizando VCP: {e}")
-            return {'vcp_detected': False, 'details': [f'Error: {e}']}
+            return {'vcp_detected': False, 'is_in_pivot': False, 'details': [f'Error: {e}']}
     
     def detect_institutional_accumulation(self, df, volume_50d_avg):
         """Detecta evidencia básica de acumulación institucional"""
@@ -334,6 +343,12 @@ class MinerviniStockScreener:
             # aparezcan más abajo que aquellas con solo fallos técnicos menores.
             if analysis.get('is_fundamental_failure', False):
                 score *= 0.6 # Reducir el score en un 40%
+
+            # Penalizar si el precio está extendido, bonificar si está en un punto de entrada accionable
+            if analysis.get('is_extended', False):
+                score *= 0.8  # Penalización del 20% por estar extendida
+            if analysis.get('is_actionable_entry', False):
+                score += 10 # Bonificación de 10 puntos por setup accionable
                 
             return min(round(score, 1), 100)
             
@@ -350,7 +365,8 @@ class MinerviniStockScreener:
             'minervini_score': 0, 'filter_reasons': [], 'rs_rating': rs_rating,
             'passes_minervini_technical': False, 'passes_minervini_fundamental': False,
             'ma_50': None, 'ma_150': None, 'ma_200': None, 'high_52w': None, 'low_52w': None,
-            'distance_from_52w_low': None, 'distance_to_52w_high': None, 'vcp_detected': False,
+            'distance_from_52w_low': None, 'distance_to_52w_high': None, 
+            'vcp_detected': False, 'entry_signal': 'N/A', 'is_extended': False, 'is_actionable_entry': False,
             'vcp_analysis': {}, 'institutional_accumulation': False, 'institutional_evidence': False,
             'institutional_score': 0, 'institutional_details': [], 'volume_50d_avg': None,
             'earnings_acceleration': False, 'roe_strong': False
@@ -368,6 +384,8 @@ class MinerviniStockScreener:
             # --- CÁLCULOS BÁSICOS INICIALES ---
             latest = df.iloc[-1]
             current_price = latest['Close']
+            ma_10 = latest['MA_10']
+            ma_21 = latest['MA_21']
             ma_50 = latest['MA_50']
             ma_150 = latest['MA_150'] 
             ma_200 = latest['MA_200']
@@ -388,8 +406,21 @@ class MinerviniStockScreener:
                     'rs_rating': rs_rating,
                     'is_fundamental_failure': is_fundamental_failure
                 }
+                # El score de una acción rechazada no debe tener bonificación por punto de entrada
+                # ni penalización por estar extendida, ya que no es candidata.
+                # Por eso no se pasan 'is_extended' ni 'is_actionable_entry' aquí.
                 result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
                 return result
+
+            # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE) ---
+            price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
+            price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
+            is_extended = price_vs_ma10_pct > 10 or price_vs_ma21_pct > 15 # Umbrales de extensión
+            result['is_extended'] = is_extended
+
+            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
+            result['vcp_analysis'] = vcp_analysis
+            result['vcp_detected'] = vcp_analysis['vcp_detected']
 
             # FILTRO 1: TENDENCIA DE LARGO PLAZO (los más importantes y baratos)
             price_above_long_mas = current_price > ma_150 and current_price > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
@@ -408,7 +439,7 @@ class MinerviniStockScreener:
                 return reject_and_return('Stage 1/3 (Base/Top)', "MA200 no tiene tendencia alcista ≥1 mes")
 
             # FILTRO 2: JERARQUÍA DE MEDIAS MÓVILES
-            ma_hierarchy = (current_price > ma_50 > ma_150 > ma_200) if all(pd.notna(x) for x in [ma_50, ma_150, ma_200]) else False
+            ma_hierarchy = (current_price > ma_50 > ma_150 > ma_200) if all(pd.notna(x) for x in [ma_10, ma_21, ma_50, ma_150, ma_200]) else False
             if not ma_hierarchy:
                 return reject_and_return('Stage 2 (Developing)', "Jerarquía MAs incorrecta (Price>MA50>MA150>MA200)")
 
@@ -435,8 +466,7 @@ class MinerviniStockScreener:
                 return reject_and_return('Stage 2 (Developing)', f"RS Rating insuficiente (<70): {rs_rating}")
 
             # FILTRO 5: PATRONES DE PRECIO/VOLUMEN (más caros de calcular)
-            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
-            vcp_detected = vcp_analysis['vcp_detected']
+            vcp_detected = result['vcp_detected']
             basic_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
             price_volume_action = vcp_detected or basic_accumulation
             if not price_volume_action:
@@ -447,6 +477,11 @@ class MinerviniStockScreener:
             stage_analysis = "Stage 2 (Uptrend)"
             result['passes_minervini_technical'] = True
             result['stage_analysis'] = stage_analysis
+
+            # --- DETERMINAR SEÑAL DE ENTRADA (LÓGICA MEJORADA) ---
+            entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
+            result['entry_signal'] = entry_signal
+            result['is_actionable_entry'] = is_actionable
 
             # FILTRO FUNDAMENTAL CERO: BENEFICIOS POSITIVOS (NO NEGOCIABLE)
             # Descartar totalmente si no hay beneficios, como solicitado por el usuario.
@@ -466,7 +501,7 @@ class MinerviniStockScreener:
             earnings_acceleration = False
             if ticker_info:
                 try:
-                    quarterly_earnings_growth = ticker_info.get('quarterlyEarningsGrowthYOY')
+                    quarterly_earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
                     if quarterly_earnings_growth is not None:
                         strong_earnings = quarterly_earnings_growth >= 0.25
                         earnings_acceleration = quarterly_earnings_growth > 0.3  # >30% como proxy de aceleración
@@ -521,7 +556,9 @@ class MinerviniStockScreener:
                 'institutional_evidence': institutional_evidence,
                 'institutional_score': institutional_score,
                 'earnings_acceleration': earnings_acceleration,
-                'roe_strong': roe_strong
+                'roe_strong': roe_strong,
+                'is_extended': is_extended,  # Para penalizar en el score
+                'is_actionable_entry': is_actionable  # Para bonificar en el score
             }
             minervini_score = self.calculate_minervini_score(analysis_for_scoring)
 
@@ -531,7 +568,8 @@ class MinerviniStockScreener:
                 'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None, 'high_52w': round(high_52w, 2) if high_52w else None,
                 'low_52w': round(low_52w, 2) if low_52w else None, 'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
                 'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None, 'vcp_detected': vcp_detected,
-                'vcp_analysis': vcp_analysis, 'institutional_accumulation': basic_accumulation, 'institutional_evidence': institutional_evidence,
+                'entry_signal': entry_signal, 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
+                'vcp_analysis': vcp_analysis, 'institutional_accumulation': basic_accumulation, 'institutional_evidence': institutional_evidence, 
                 'institutional_score': institutional_score, 'institutional_details': institutional_details,
                 'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None, 'earnings_acceleration': earnings_acceleration,
                 'roe_strong': roe_strong, 'passes_all_filters': passes_all_filters, 'minervini_score': minervini_score,
@@ -544,6 +582,50 @@ class MinerviniStockScreener:
             result['stage_analysis'] = 'Error en cálculo'
             result['filter_reasons'] = ['Error de cálculo']
             return result
+
+    def get_entry_signal(self, df, vcp_analysis, is_extended):
+        """
+        Determina la mejor señal de entrada analizando múltiples patrones.
+        Devuelve la señal (string) y si es un punto de entrada accionable (boolean).
+        """
+        # Prioridad 1: Pivote VCP (la señal de más bajo riesgo)
+        if vcp_analysis.get('is_in_pivot', False):
+            return "Pivot Point", True
+
+        current_price = df['Close'].iloc[-1]
+
+        # Prioridad 2: Rebote en la media móvil de 50 días (una entrada de pullback clásica)
+        ma_50_series = df['MA_50']
+        if pd.notna(ma_50_series.iloc[-1]):
+            ma_50 = ma_50_series.iloc[-1]
+            # La MA50 debe estar en tendencia alcista
+            ma_50_uptrend = ma_50 > ma_50_series.iloc[-20] if len(df) > 20 else False
+            if ma_50_uptrend:
+                # LÓGICA MEJORADA: Compara el Low de cada día con la MA50 de ese día.
+                # El precio tocó o perforó ligeramente la MA50 en los últimos 10 días
+                touched_ma50 = (df['Low'].tail(10) < ma_50_series.tail(10) * 1.03).any()
+                # El precio ahora está rebotando, pero no se ha extendido demasiado (>7%)
+                is_bouncing = current_price > ma_50 and ((current_price - ma_50) / ma_50) < 0.07
+                if touched_ma50 and is_bouncing:
+                    return "MA-Bounce-50", True
+
+        # Prioridad 3: Rebote en la media móvil de 21 días (para pullbacks más cortos)
+        ma_21_series = df['MA_21']
+        if pd.notna(ma_21_series.iloc[-1]):
+            ma_21 = ma_21_series.iloc[-1]
+            # LÓGICA MEJORADA: Compara el Low de cada día con la MA21 de ese día.
+            # El precio tocó o perforó ligeramente la MA21 en los últimos 5 días
+            touched_ma21 = (df['Low'].tail(5) < ma_21_series.tail(5) * 1.02).any()
+            # El precio ahora está rebotando, pero no se ha extendido demasiado (>5%)
+            is_bouncing_21 = current_price > ma_21 and ((current_price - ma_21) / ma_21) < 0.05
+            if touched_ma21 and is_bouncing_21:
+                return "MA-Bounce-21", True
+
+        # Si no hay señal de entrada, determinar si está extendido o consolidando
+        if is_extended:
+            return "Extendido", False
+        
+        return "Consolidando", False
     
     def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings):
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
@@ -778,6 +860,8 @@ class MinerviniStockScreener:
                     'ROE_Strong': analysis.get('roe_strong'),
                     'Stage_Analysis': analysis.get('stage_analysis'),
                     'Passes_Technical': analysis.get('passes_minervini_technical'),
+                    'Entry_Signal': analysis.get('entry_signal'),
+                    'Is_Extended': analysis.get('is_extended'),
                     'Passes_Fundamental': analysis.get('passes_minervini_fundamental'),
                     'Passes_All_Filters': analysis.get('passes_all_filters'),
                     'Filter_Reasons': "; ".join(analysis.get('filter_reasons', [])),

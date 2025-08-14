@@ -30,23 +30,6 @@ def get_rs_strength_label(rs_rating):
     else:
         return "❌ Weak"
 
-def get_minervini_recommendation(row):
-    """Devuelve recomendación basada en criterios Minervini"""
-    score = row.get('Minervini_Score', 0)
-    stage = row.get('Stage_Analysis', '')
-    passes_all = row.get('Passes_All_Filters', False)
-    
-    if passes_all and score >= 80:
-        return "🎯 BUY - Strong Stage 2"
-    elif passes_all and score >= 60:
-        return "✅ BUY - Good Setup"  
-    elif "Stage 2" in stage and score >= 70:
-        return "⚠️ WATCH - Developing"
-    elif "Stage 1" in stage or "Stage 3" in stage:
-        return "⏳ WAIT - Base/Top"
-    else:
-        return "❌ AVOID - Weak/Decline"
-
 def create_minervini_dashboard_data():
     """Convierte los resultados Minervini en datos JSON para dashboard"""
     
@@ -183,12 +166,15 @@ def create_minervini_dashboard_data():
                         "passes_technical": bool(row.get('Passes_Technical', False)),
                         "passes_fundamental": bool(row.get('Passes_Fundamental', False))
                     },
+                    "entry_point": {
+                        "signal": str(row.get('Entry_Signal', 'N/A')),
+                        "is_extended": bool(row.get('Is_Extended', False))
+                    },
                     "ma_levels": {
                         "ma_50": float(row['MA_50']) if pd.notna(row.get('MA_50')) else 0.0,
                         "ma_150": float(row['MA_150']) if pd.notna(row.get('MA_150')) else 0.0,
                         "ma_200": float(row['MA_200']) if pd.notna(row.get('MA_200')) else 0.0
-                    },
-                    "recommendation": str(get_minervini_recommendation(row))
+                    }
                 }
                 dashboard_data["top_picks"].append(pick)
             

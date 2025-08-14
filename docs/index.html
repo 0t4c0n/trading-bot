@@ -270,40 +270,39 @@
             font-weight: 700;
         }
         
-        .recommendation {
+        .entry-signal {
             margin-top: 12px;
-            padding: 10px;
+            padding: 8px 12px;
             border-radius: 10px;
             text-align: center;
             font-weight: 600;
-            font-size: 0.9em;
+            font-size: 0.85em;
+            border: 1px solid transparent;
         }
-        
-        .recommendation.buy-strong {
-            background: #dcfce7;
-            color: #166534;
+
+        .entry-signal.pivot-point {
+            background-color: #dcfce7; /* Verde claro */
+            color: #166534; /* Verde oscuro */
+            border-color: #86efac;
         }
-        
-        .recommendation.buy-good {
-            background: #f0fdf4;
-            color: #15803d;
+
+        .entry-signal.ma-bounce-50,
+        .entry-signal.ma-bounce-21 {
+            background-color: #e0f2fe; /* Azul claro */
+            color: #0c4a6e; /* Azul oscuro */
+            border-color: #7dd3fc;
         }
-        
-        .recommendation.watch {
-            background: #fefce8;
-            color: #854d0e;
+
+        .entry-signal.consolidando {
+            background-color: #fefce8; /* Amarillo claro */
+            color: #854d0e; /* Amarillo oscuro */
         }
-        
-        .recommendation.wait {
-            background: #fffbeb;
-            color: #b45309;
+
+        .entry-signal.extendido {
+            background-color: #fef2f2; /* Rojo claro */
+            color: #b91c1c; /* Rojo oscuro */
         }
-        
-        .recommendation.avoid {
-            background: #fef2f2;
-            color: #b91c1c;
-        }
-        
+
         .rank {
             position: absolute;
             top: 15px; /* Alineado con el contenido */
@@ -604,7 +603,6 @@
                 data.top_picks.forEach(stock => {
                     const passesAll = stock.stage_analysis.passes_all_filters;
                     const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
-                    const recClass = stock.recommendation.toLowerCase().replace(/ /g, '-').replace(/[^\w-]/g, '');
                     const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
                     
                     let indicatorsHtml = '';
@@ -642,8 +640,8 @@
 
                             ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
                             
-                            <div class="recommendation ${recClass}">
-                                ${stock.recommendation}
+                            <div class="entry-signal ${stock.entry_point.signal.toLowerCase().replace(/ /g, '-')}">
+                                🚦 Punto de Entrada: <strong>${stock.entry_point.signal}</strong>
                             </div>
                         </div>
                     `;
@@ -680,11 +678,16 @@
                 const stageDist = data.market_analysis.stage_distribution;
                 const totalStocks = data.summary.total_analyzed;
                 
+                const stage2_total = (stageDist["Stage 2 (Uptrend)"] || 0) + (stageDist["Stage 2 (Developing)"] || 0);
+                const stage1_3_total = (stageDist["Stage 1/3 (Base/Top)"] || 0);
+                const stage4_total = (stageDist["Stage 4 (Decline)"] || 0);
+                const other_total = totalStocks - (stage2_total + stage1_3_total + stage4_total);
+
                 const stages = {
-                    "Stage 2 (Uptrend)": { color: "#16a34a", value: stageDist["Stage 2 (Uptrend)"] || 0 },
-                    "Stage 1/3 (Base/Top)": { color: "#f59e0b", value: (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0) },
-                    "Stage 4 (Decline)": { color: "#ef4444", value: stageDist["Stage 4 (Decline)"] || 0 }, // Combina Stage 1 y 3
-                    "Developing/Other": { color: "#6b7280", value: totalStocks - ((stageDist["Stage 2 (Uptrend)"] || 0) + (stageDist["Stage 1/3 (Base/Top)"] || 0) + (stageDist["Stage 4 (Decline)"] || 0) + (stageDist["Stage 1 (Base/Top)"] || 0)) }
+                    "Stage 2": { color: "#16a34a", value: stage2_total },
+                    "Stage 1/3": { color: "#f59e0b", value: stage1_3_total },
+                    "Stage 4": { color: "#ef4444", value: stage4_total },
+                    "Other": { color: "#6b7280", value: other_total }
                 };
 
                 marketHealthHtml = `
@@ -698,7 +701,7 @@
                     marketHealthHtml += `
                         <div class="chart-bar" style="height: ${percentage}%; background-color: ${details.color};">
                             <div class="bar-value">${details.value}</div>
-                            <div class="bar-label">${name.split(' ')[1]}</div>
+                            <div class="bar-label">${name}</div>
                         </div>
                     `;
                 }
