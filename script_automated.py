@@ -223,7 +223,9 @@ class MinerviniStockScreener:
             max_down_volume = down_day_volumes.max() if not down_day_volumes.empty else 0
             
             # Buscamos si en los últimos 5 días hubo un pocket pivot
-            up_days_last_5 = last_10_days.tail(5)[last_10_days['Close'] > last_10_days['Open']]
+            # CORRECCIÓN: Se filtra sobre los últimos 5 días para evitar el warning de reindexación de pandas.
+            last_5_days = last_10_days.tail(5)
+            up_days_last_5 = last_5_days[last_5_days['Close'] > last_5_days['Open']]
             neutral_volume_high = (up_days_last_5['Volume'] > max_down_volume).any() if not up_days_last_5.empty else False
 
             # Scoring de acumulación (requiere 2 de 3 señales)
@@ -459,6 +461,11 @@ class MinerviniStockScreener:
 
             vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
 
+            # CORRECCIÓN: Mover el cálculo de la señal de entrada aquí, ANTES del embudo de rechazo.
+            # Esto asegura que cada acción tenga una señal (ej. 'Consolidando', 'Extendido') en lugar de 'NaN'.
+            entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
+            result['entry_signal'] = entry_signal
+
             # --- EMBUDO DE FILTRADO TÉCNICO (EARLY EXIT) ---
             def reject_and_return(stage, reason, passes_technical=False):
                 """Función interna para actualizar y devolver el diccionario de resultados en caso de rechazo."""
@@ -559,9 +566,6 @@ class MinerviniStockScreener:
             result['passes_minervini_technical'] = True
             result['stage_analysis'] = stage_analysis
 
-            # --- DETERMINAR SEÑAL DE ENTRADA (LÓGICA MEJORADA) ---
-            entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
-            result['entry_signal'] = entry_signal
             result['is_actionable_entry'] = is_actionable
 
             # FILTRO FUNDAMENTAL CERO: BENEFICIOS POSITIVOS (NO NEGOCIABLE)
