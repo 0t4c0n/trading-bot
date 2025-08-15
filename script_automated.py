@@ -21,6 +21,7 @@ class MinerviniStockScreener:
         self.MIN_ROE = 0.17             # Retorno sobre el patrimonio (ROE) >= 17%
         # --- CONSTANTES PARA EXCEPCIÓN DE LÍDERES DE MERCADO ---
         # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
+        self.MIN_PATTERN_SCORE = 5 # Puntuación mínima requerida en el análisis de patrones (VCP/Acumulación)
         self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
         self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
         # --- CONSTANTES PARA FILTRO DE CRECIMIENTO INTELIGENTE ---
@@ -150,22 +151,25 @@ class MinerviniStockScreener:
             price_near_high = (high_52w - current_price) / high_52w <= 0.15  # Dentro del 15% del máximo
             if not price_near_high:
                 return {'vcp_detected': False, 'is_in_pivot': False, 'details': ['No está cerca del máximo 52w']}
-
+            
             # 2. CONTRACCIÓN DE VOLATILIDAD (VCP - Ingrediente #1): El resorte se comprime.
             # Volatilidad en los últimos 10 días vs los últimos 50 días
             vol_10d = (df['High'].tail(10).max() - df['Low'].tail(10).min()) / df['Close'].tail(10).mean()
             vol_50d = (df['High'].tail(50).max() - df['Low'].tail(50).min()) / df['Close'].tail(50).mean()
             
             volatility_tightening = vol_10d < (vol_50d * 0.6) # La volatilidad reciente es <60% de la anterior
-            
-            # 3. SEQUÍA DE VOLUMEN (VCP - Ingrediente #2): Los vendedores se agotan.
-            volume_10d_avg = df['Volume'].tail(10).mean()
-            volume_dry_up = volume_10d_avg < (volume_50d_avg * 0.7) # Volumen reciente <70% de la media
+
+            # 3. SEQUÍA DE VOLUMEN (LÓGICA MEJORADA): Los vendedores se agotan.
+            # En lugar de una media, contamos el número de días con volumen por debajo del promedio.
+            # Esto es más robusto contra picos de volumen aislados.
+            low_volume_days = df['Volume'].tail(10) < volume_50d_avg
+            # Requerimos que al menos 5 de los últimos 10 días tengan volumen bajo.
+            volume_dry_up = low_volume_days.sum() >= 5
             
             # 4. PUNTO PIVOTE (La calma antes de la explosión): Rango de precio ultra-estrecho.
             # El precio se mueve lateralmente en un rango muy ajustado en los últimos días.
             price_range_5d = (df['High'].tail(5).max() - df['Low'].tail(5).min()) / current_price
-            is_in_tight_range = price_range_5d < 0.03 # Rango de menos del 3% en los últimos 5 días
+            is_in_tight_range = price_range_5d < 0.025 # Rango ajustado a <2.5% en los últimos 5 días
 
             # --- LÓGICA DE DECISIÓN ---
             # Se considera que hay un patrón VCP general si la volatilidad se contrae Y el volumen se seca.
@@ -177,7 +181,7 @@ class MinerviniStockScreener:
             
             details = []
             if volatility_tightening: details.append(f"Volatilidad contraída (10d: {vol_10d:.2%}, 50d: {vol_50d:.2%})")
-            if volume_dry_up: details.append(f"Volumen seco (10d avg: {volume_10d_avg/1e6:.2f}M vs 50d: {volume_50d_avg/1e6:.2f}M)")
+            if volume_dry_up: details.append(f"Volumen seco ({low_volume_days.sum()}/10 días < media)")
             if is_in_tight_range: details.append("Rango estrecho (<3% en 5d)")
             if is_in_pivot: details.append("✅ SEÑAL PIVOTE ACTIVA")
 
@@ -199,28 +203,30 @@ class MinerviniStockScreener:
             if len(df) < 50:
                 return False
             
-            recent_data = df.tail(20)  # Últimos 20 días
+            recent_data = df.tail(20)
             
-            # Criterios de acumulación mejorados:
-            # 1. Volumen promedio reciente > promedio 50d
-            recent_volume_avg = recent_data['Volume'].mean()
-            volume_increase = recent_volume_avg > volume_50d_avg * 1.15  # Aumentado de 1.1 a 1.15
+            # 1. Días de acumulación superan a los de distribución
+            accumulation_days = (recent_data['Close'] > recent_data['Open']) & (recent_data['Volume'] > volume_50d_avg)
+            distribution_days = (recent_data['Close'] < recent_data['Open']) & (recent_data['Volume'] > volume_50d_avg)
+            volume_increase = accumulation_days.sum() > distribution_days.sum()
+
+            # 2. Ratio de volumen UP/DOWN (OBV-like)
+            # Suma el volumen en días de subida y resta el de días de bajada. Un valor positivo indica presión compradora.
+            up_volume = recent_data[recent_data['Close'] > recent_data['Open']]['Volume'].sum()
+            down_volume = recent_data[recent_data['Close'] < recent_data['Open']]['Volume'].sum()
+            up_days_ratio = up_volume > (down_volume * 1.2) # Volumen de subida es al menos un 20% mayor
+
+            # 3. Detección de "Pocket Pivot" (señal institucional clave)
+            # Un día de subida cuyo volumen es mayor que el de CUALQUIER día de bajada en los últimos 10 días.
+            last_10_days = df.tail(10)
+            down_day_volumes = last_10_days[last_10_days['Close'] < last_10_days['Open']]['Volume']
+            max_down_volume = down_day_volumes.max() if not down_day_volumes.empty else 0
             
-            # 2. Días con volumen alto coinciden con días alcistas (mejorado)
-            high_volume_days = recent_data[recent_data['Volume'] > volume_50d_avg * 1.5]
-            if len(high_volume_days) > 0:
-                up_days_ratio = len(high_volume_days[high_volume_days['Close'] > high_volume_days['Open']]) / len(high_volume_days)
-            else:
-                up_days_ratio = 0
-            
-            # 3. NUEVO: Volumen en días neutrales (instituciones acumulan sin mover precio)
-            neutral_days = recent_data[abs((recent_data['Close'] / recent_data['Open']) - 1) < 0.01]  # <1% movimiento
-            neutral_volume_high = False
-            if len(neutral_days) > 0:
-                neutral_avg_volume = neutral_days['Volume'].mean()
-                neutral_volume_high = neutral_avg_volume > volume_50d_avg * 1.2
-            
-            # Scoring de acumulación (0-3 puntos)
+            # Buscamos si en los últimos 5 días hubo un pocket pivot
+            up_days_last_5 = last_10_days.tail(5)[last_10_days['Close'] > last_10_days['Open']]
+            neutral_volume_high = (up_days_last_5['Volume'] > max_down_volume).any() if not up_days_last_5.empty else False
+
+            # Scoring de acumulación (requiere 2 de 3 señales)
             accumulation_score = 0
             if volume_increase: accumulation_score += 1
             if up_days_ratio > 0.65: accumulation_score += 1  # Aumentado threshold
@@ -309,6 +315,33 @@ class MinerviniStockScreener:
         except Exception as e:
             print(f"Error en análisis institucional híbrido para {symbol}: {e}")
             return False, 0, ["Error in analysis"]
+
+    def get_pattern_score(self, vcp_analysis, institutional_accumulation):
+        """
+        Sistema de puntuación integrado para VCP y acumulación.
+        Reemplaza la lógica binaria 'OR' por un score más matizado.
+        """
+        score = 0
+        details = []
+
+        # La señal de mayor calidad es un punto pivote accionable.
+        if vcp_analysis.get('is_in_pivot', False):
+            score += 8  # Puntuación muy alta
+            details.append("Pivot Point (+8)")
+        # Si no está en pivote, pero hay un VCP general, también es muy bueno.
+        elif vcp_analysis.get('vcp_detected', False):
+            score += 5
+            details.append("VCP Detected (+5)")
+        
+        # La acumulación institucional siempre es una buena señal.
+        if institutional_accumulation:
+            # Si ya hay un VCP, la acumulación es una confirmación extra.
+            # Si no hay VCP, es la señal principal.
+            score += 4
+            details.append("Institutional Accumulation (+4)")
+
+        return score, details
+
     
     def calculate_minervini_score(self, analysis):
         """Calcula score Minervini (0-100) para ranking"""
@@ -343,11 +376,10 @@ class MinerviniStockScreener:
                 score += high_score + low_score
             
             # 4. Technical Patterns & Volume (0-10 points) - BONIFICACIONES
-            # Aumentamos la bonificación por VCP para darle más importancia
-            if analysis.get('vcp_detected', False):
-                score += 5
-            if analysis.get('institutional_accumulation', False):
-                score += 3
+            # Usamos el nuevo pattern_score para una bonificación más precisa
+            pattern_score = analysis.get('pattern_score', 0)
+            score += min(pattern_score, 10) # Añade el score del patrón, con un máximo de 10 puntos
+
             if analysis.get('earnings_acceleration', False):
                 score += 2
             if analysis.get('roe_strong', False):
@@ -380,7 +412,7 @@ class MinerviniStockScreener:
             'minervini_score': 0, 'filter_reasons': [], 'rs_rating': rs_rating,
             'passes_minervini_technical': False, 'passes_minervini_fundamental': False,
             'ma_50': None, 'ma_150': None, 'ma_200': None, 'high_52w': None, 'low_52w': None,
-            'distance_from_52w_low': None, 'distance_to_52w_high': None, 
+            'distance_from_52w_low': None, 'distance_to_52w_high': None, 'pattern_score': 0,
             'vcp_detected': False, 'entry_signal': 'N/A', 'is_extended': False, 'is_actionable_entry': False,
             'vcp_analysis': {}, 'institutional_accumulation': False, 'institutional_evidence': False,
             'institutional_score': 0, 'institutional_details': [], 'volume_50d_avg': None,
@@ -406,7 +438,26 @@ class MinerviniStockScreener:
             ma_200 = latest['MA_200']
             high_52w, low_52w = self.calculate_52_week_range(df)
             volume_50d_avg = df['Volume'].tail(50).mean()
-            result['current_price'] = round(current_price, 2)
+            
+            # --- ACTUALIZAR RESULTADO CON DATOS BÁSICOS (ANTES DE FILTRAR) ---
+            # Esto asegura que los datos existan en el CSV incluso si la acción es rechazada.
+            result.update({
+                'current_price': round(current_price, 2),
+                'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None,
+                'ma_150': round(ma_150, 2) if pd.notna(ma_150) else None,
+                'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None,
+                'high_52w': round(high_52w, 2) if high_52w else None,
+                'low_52w': round(low_52w, 2) if low_52w else None,
+                'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None
+            })
+
+            # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE Y EL DASHBOARD) ---
+            price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
+            price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
+            is_extended = price_vs_ma10_pct > 10 or price_vs_ma21_pct > 15 # Umbrales de extensión
+            result['is_extended'] = is_extended
+
+            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
 
             # --- EMBUDO DE FILTRADO TÉCNICO (EARLY EXIT) ---
             def reject_and_return(stage, reason, passes_technical=False):
@@ -414,27 +465,23 @@ class MinerviniStockScreener:
                 result['stage_analysis'] = stage
                 result['filter_reasons'] = [reason]
                 result['passes_minervini_technical'] = passes_technical
-                is_fundamental_failure = passes_technical
+                is_fundamental_failure = passes_technical # True if it's a fundamental failure
+                
+                # Para que el score de las acciones rechazadas sea más preciso,
+                # calculamos las distancias y las pasamos al scorer.
+                dist_from_high = ((high_52w - current_price) / high_52w) * 100 if high_52w else 100
+                dist_from_low = ((current_price - low_52w) / low_52w) * 100 if low_52w else 0
+
                 analysis_for_scoring = {
                     'stage_analysis': stage,
                     'rs_rating': rs_rating,
                     'is_fundamental_failure': is_fundamental_failure,
-                    # Se incluye 'is_extended' para que la penalización por extensión se aplique
-                    # también a las acciones rechazadas, haciendo el scoring más consistente.
+                    'distance_to_52w_high': dist_from_high,
+                    'distance_from_52w_low': dist_from_low,
                     'is_extended': result.get('is_extended', False)
                 }
                 result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
                 return result
-
-            # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE) ---
-            price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
-            price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
-            is_extended = price_vs_ma10_pct > 10 or price_vs_ma21_pct > 15 # Umbrales de extensión
-            result['is_extended'] = is_extended
-
-            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
-            result['vcp_analysis'] = vcp_analysis
-            result['vcp_detected'] = vcp_analysis['vcp_detected']
 
             # FILTRO 1: TENDENCIA DE LARGO PLAZO (los más importantes y baratos)
             price_above_long_mas = current_price > ma_150 and current_price > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
@@ -473,7 +520,7 @@ class MinerviniStockScreener:
                 is_high_rs = rs_rating is not None and rs_rating > self.STRONG_LEADER_MIN_RS
                 
                 if not (is_strong_leader_candidate and is_high_rs):
-                    return reject_and_return('Stage 2 (Developing)', f"Precio no está {self.MIN_PCT_ABOVE_LOW}%+ sobre mínimo 52w ({distance_from_low:.1f}%)")
+                    return reject_and_return('Stage 2 (Developing)', "Precio no está 30%+ sobre mínimo 52w")
             
             if high_52w:
                 distance_from_high = ((high_52w - current_price) / high_52w) * 100
@@ -481,19 +528,30 @@ class MinerviniStockScreener:
             else:
                 return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w")
             if not price_near_high:
-                return reject_and_return('Stage 2 (Developing)', f"Precio no está dentro del {self.MAX_PCT_BELOW_HIGH}% del máximo 52w ({distance_from_high:.1f}%)")
+                return reject_and_return('Stage 2 (Developing)', "Precio no está dentro del 25% del máximo 52w")
 
             # FILTRO 4: FUERZA RELATIVA
             rs_strong = rs_rating is not None and rs_rating >= self.MIN_RS_RATING
             if not rs_strong:
-                return reject_and_return('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING}): {rs_rating}")
+                return reject_and_return('Stage 2 (Developing)', "RS Rating insuficiente (<70)")
+
+            # FILTRO ADICIONAL: PRECIO EXTENDIDO (GUARDIÁN CONTRA PERSECUCIÓN)
+            # Este filtro es crucial en mercados alcistas fuertes para evitar comprar en picos.
+            if result['is_extended']:
+                return reject_and_return('Stage 2 (Developing)', "Precio extendido sobre MAs de corto plazo")
 
             # FILTRO 5: PATRONES DE PRECIO/VOLUMEN (más caros de calcular)
+            # Actualizamos el resultado con el análisis VCP ahora que sabemos que no fue rechazado antes
+            result['vcp_analysis'] = vcp_analysis
+            result['vcp_detected'] = vcp_analysis['vcp_detected']
+
             vcp_detected = result['vcp_detected']
-            basic_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
-            price_volume_action = vcp_detected or basic_accumulation
-            if not price_volume_action:
-                return reject_and_return('Stage 2 (Developing)', "Sin evidencia de VCP o acumulación institucional")
+            institutional_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
+            result['institutional_accumulation'] = institutional_accumulation
+            
+            pattern_score, pattern_details = self.get_pattern_score(vcp_analysis, institutional_accumulation)
+            if pattern_score < self.MIN_PATTERN_SCORE:
+                return reject_and_return('Stage 2 (Developing)', f"Patrón de precio/volumen insuficiente (Score: {pattern_score})")
 
             # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
             passes_technical = True
@@ -533,7 +591,7 @@ class MinerviniStockScreener:
                 except:
                     strong_earnings = False
             if not strong_earnings:
-                reason = f"Earnings growth <{self.MIN_EARNINGS_GROWTH*100}% YoY o dato no disponible"
+                reason = "Earnings growth <25.0% YoY o dato no disponible"
                 return reject_and_return(stage_analysis, reason, passes_technical=True)
 
             # FILTRO 7: GROWTH (REVENUE + ROE)
@@ -583,7 +641,7 @@ class MinerviniStockScreener:
                 )
                 institutional_evidence = passes_institutional
             if not institutional_evidence:
-                reason = f"Evidencia institucional insuficiente (Score: {institutional_score}/8)"
+                reason = "Evidencia institucional insuficiente"
                 return reject_and_return(stage_analysis, reason, passes_technical=True)
 
             # --- ¡ÉXITO! LA ACCIÓN PASA TODOS LOS FILTROS ---
@@ -596,8 +654,8 @@ class MinerviniStockScreener:
                 'rs_rating': rs_rating,
                 'distance_to_52w_high': distance_from_high,
                 'distance_from_52w_low': distance_from_low,
-                'vcp_detected': vcp_detected,
-                'institutional_accumulation': basic_accumulation,
+                'pattern_score': pattern_score, # Usamos el nuevo score
+                'vcp_detected': vcp_detected, # Mantenemos para info
                 'institutional_evidence': institutional_evidence,
                 'institutional_score': institutional_score,
                 'earnings_acceleration': earnings_acceleration,
@@ -612,7 +670,7 @@ class MinerviniStockScreener:
                 'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None, 'ma_150': round(ma_150, 2) if pd.notna(ma_150) else None,
                 'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None, 'high_52w': round(high_52w, 2) if high_52w else None,
                 'low_52w': round(low_52w, 2) if low_52w else None, 'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
-                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None, 'vcp_detected': vcp_detected,
+                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None, 'pattern_score': pattern_score, 'vcp_detected': vcp_detected,
                 'entry_signal': entry_signal, 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
                 'vcp_analysis': vcp_analysis, 'institutional_accumulation': basic_accumulation, 'institutional_evidence': institutional_evidence, 
                 'institutional_score': institutional_score, 'institutional_details': institutional_details,
@@ -972,7 +1030,7 @@ def main():
     rs_ratings = screener.calculate_rs_ratings_from_scores(rs_scores)
     
     # PASO 4: Análisis Minervini completo usando los RS Ratings pre-calculados
-    batch_size = 30  # Reducido para mayor fiabilidad y evitar rate limits
+    batch_size = 30  # Reducido para mayor fiabilidad y evitar rate limits en .info
     print(f"\nIniciando análisis de {len(symbols_to_process)} acciones con criterios Minervini SEPA...")
     print("Usando RS Ratings pre-calculados para mayor precisión.\n")
 

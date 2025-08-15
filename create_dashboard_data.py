@@ -208,14 +208,20 @@ def create_minervini_dashboard_data():
                     strong_rs = (valid_rs_stocks['RS_Rating'] >= 70).sum()
                     pct_rs_strong = round((strong_rs / len(valid_rs_stocks)) * 100, 1)
 
+            # NUEVO: Calcular % de acciones en Stage 2
+            total_stocks_for_stage_pct = len(all_df.dropna(subset=['Stage_Analysis']))
+            total_stage2 = stage_distribution.get("Stage 2 (Uptrend)", 0) + stage_distribution.get("Stage 2 (Developing)", 0)
+            pct_in_stage2 = round((total_stage2 / total_stocks_for_stage_pct) * 100, 1) if total_stocks_for_stage_pct > 0 else 0
+
             dashboard_data["market_analysis"] = {
                 "stage_distribution": stage_distribution,
                 "stage_avg_scores": stage_avg_scores,
-                "total_stage2": stage_distribution.get("Stage 2 (Uptrend)", 0) + stage_distribution.get("Stage 2 (Developing)", 0),
+                "total_stage2": total_stage2,
                 "market_health": "Strong" if len(stage2_df) > 0 else "Weak",
                 # Datos de amplitud
                 "pct_above_ma200": pct_above_ma200,
-                "pct_rs_strong": pct_rs_strong
+                "pct_rs_strong": pct_rs_strong,
+                "pct_in_stage2": pct_in_stage2
             }
             
             print(f"✓ Análisis de mercado por stages calculado")

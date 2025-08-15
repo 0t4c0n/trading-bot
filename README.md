@@ -77,10 +77,9 @@ minervini-screener/
 
 ### 4. Configurar automatización
 El screener se ejecutará automáticamente:
-- **Horario estándar (Nov-Mar)**: 01:00 UTC = 5h después del cierre (20:00 UTC)
-- **Horario de verano (Mar-Nov)**: 00:00 UTC = 5h después del cierre (19:00 UTC)  
+- **Horario**: 01:00 UTC, que corresponde a 4-5 horas después del cierre del mercado de EE. UU.
 - **Días**: Martes a Sábado UTC (equivale a Lunes-Viernes días de mercado US)
-- **Duración**: 60-120 minutos (análisis completo + cálculos Minervini)
+- **Duración**: ~60-120 minutos (análisis completo + cálculos Minervini)
 - **Ejecución manual**: Pestaña "Actions" > "Run workflow"
 
 ### Horarios de mercado US:
@@ -88,8 +87,8 @@ El screener se ejecutará automáticamente:
 - **EDT (Mar-Nov)**: 9:30 AM - 4:00 PM = 13:30 - 19:00 UTC
 
 ### Hora en España:
-- **Horario estándar**: 02:00 (2 AM) 
-- **Horario de verano**: 01:00 (1 AM)
+- **Horario estándar (invierno)**: 02:00 (2 AM) 
+- **Horario de verano**: 03:00 (3 AM)
 
 ## 🏛️ Sistema Híbrido de Evidencia Institucional
 
@@ -198,7 +197,7 @@ El sistema categoriza cada acción en uno de los 4 stages:
 ### GitHub Actions Workflow:
 1. **01:00 UTC (EST) / 00:00 UTC (EDT)** - Se ejecuta análisis completo
 2. **Descarga** datos de ~3,000-8,000 acciones NYSE + NASDAQ
-3. **Procesa** en lotes de 50 (reducido por mayor complejidad Minervini)
+3. **Procesa** en lotes de 30 (reducido para mayor complejidad Minervini y fiabilidad de API)
 4. **Aplica** los 11 filtros Minervini a todo el universo
 5. **Calcula** Minervini Score y RS Rating para ranking
 6. **Identifica** Stage Analysis para cada stock
@@ -229,6 +228,13 @@ python create_dashboard_data.py
 - **Technical Patterns** (0-10): Bonificaciones
   - VCP detected = +3, Institutional accumulation = +3
   - Earnings acceleration = +2, ROE strong = +2
+
+**Bonificaciones y Penalizaciones Adicionales:**
+
+El sistema de scoring incluye ajustes dinámicos para refinar la puntuación final:
+-   **Penalización por Extensión (-20% del score)**: Si una acción está "extendida" (demasiado alejada de sus medias móviles de corto plazo), su score se reduce para desincentivar la compra en picos.
+-   **Penalización por Fallo Fundamental (-40% del score)**: Si una acción pasa los filtros técnicos pero falla en un criterio fundamental clave (ej. crecimiento de beneficios), su score se reduce significativamente.
+-   **Bonificación por Entrada Accionable (+10 puntos)**: Si se detecta un punto de entrada de bajo riesgo (como un "Pivot Point" o un rebote en una media móvil clave), la acción recibe una bonificación de 10 puntos.
 
 **Clasificación de Inversión:**
 - **90-100**: Exceptional - Posición máxima permitida
@@ -280,7 +286,7 @@ PATTERN_WEIGHT = 10  # Peso de patrones técnicos
 
 ### Modificar tamaño de lotes:
 ```python
-batch_size = 50  # Reducir a 25 para mayor estabilidad, 75 para mayor velocidad
+batch_size = 30  # Reducir a 20-25 para mayor estabilidad, aumentar a 50 con precaución
 ```
 
 ## 📞 Solución de Problemas Específicos
