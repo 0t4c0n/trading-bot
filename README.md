@@ -23,7 +23,11 @@ Sistema automatizado basado en la **metodología SEPA de Mark Minervini** que an
 
 **3 Criterios Fundamentales Obligatorios:**
 1. **Beneficios Positivos y Crecimiento (Earnings)**: Se requiere que la empresa tenga beneficios netos positivos (`Net Income > 0`). Además, se busca un crecimiento de beneficios interanual (YoY) de al menos un 25%.
-2. **Revenue ≥20% + ROE ≥17%** - Crecimiento y rentabilidad
+2. **Crecimiento y Rentabilidad (Filtro Inteligente)**:
+   - **ROE ≥ 17%** (obligatorio).
+   - Y cumplir **uno** de los siguientes criterios de crecimiento:
+     - **Camino Clásico**: Crecimiento de ingresos (Revenue) ≥ 20%.
+     - **Camino "Powerhouse"**: Crecimiento de beneficios (Earnings) ≥ 40% **y** crecimiento de ingresos (Revenue) ≥ 10%.
 3. **Institutional Evidence (Híbrido)** - Sistema de 8 criterios:
    - ✅ Acumulación por volumen/precio (0-2 pts)
    - ✅ Market cap óptimo $500M-$50B (0-2 pts) 

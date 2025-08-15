@@ -23,6 +23,9 @@ class MinerviniStockScreener:
         # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
         self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
         self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
+        # --- CONSTANTES PARA FILTRO DE CRECIMIENTO INTELIGENTE ---
+        self.EXCEPTIONAL_EARNINGS_GROWTH = 0.40 # Umbral para "centrales de productividad"
+        self.DECENT_REVENUE_GROWTH = 0.10       # Requisito de ingresos más bajo para esas centrales
 
     def get_nyse_nasdaq_symbols(self):
         """Obtiene símbolos de NYSE y NASDAQ combinados"""
@@ -525,28 +528,50 @@ class MinerviniStockScreener:
                     if quarterly_earnings_growth is not None:
                         strong_earnings = quarterly_earnings_growth >= self.MIN_EARNINGS_GROWTH
                         earnings_acceleration = quarterly_earnings_growth > 0.3  # >30% como proxy de aceleración
-                    else:
-                        net_income = ticker_info.get('netIncomeToCommon')
-                        strong_earnings = net_income > 0 if net_income else False
+                    # Si 'earningsQuarterlyGrowth' es None, strong_earnings se mantendrá en False,
+                    # lo que hará que la acción falle el filtro de crecimiento, como debe ser.
                 except:
                     strong_earnings = False
             if not strong_earnings:
-                return reject_and_return(stage_analysis, f"Earnings insuficientes (<{self.MIN_EARNINGS_GROWTH*100}% YoY)", passes_technical=True)
+                reason = f"Earnings growth <{self.MIN_EARNINGS_GROWTH*100}% YoY o dato no disponible"
+                return reject_and_return(stage_analysis, reason, passes_technical=True)
 
             # FILTRO 7: GROWTH (REVENUE + ROE)
             strong_growth = False
             roe_strong = False
             if ticker_info:
-                try:
+                quarterly_earnings_growth = ticker_info.get('earningsQuarterlyGrowth') # Necesario para la nueva lógica
+                try: # Usamos un try-except más específico para evitar ocultar errores.
                     revenue_growth = ticker_info.get('revenueGrowth')
                     roe = ticker_info.get('returnOnEquity')
-                    revenue_strong = revenue_growth >= self.MIN_REVENUE_GROWTH if revenue_growth else False
-                    roe_strong = roe >= self.MIN_ROE if roe else False
-                    strong_growth = revenue_strong and roe_strong
-                except:
+
+                    # --- LÓGICA DE FILTRO DE CRECIMIENTO INTELIGENTE (REFACTORIZADA) ---
+                    # Un candidato debe tener datos de ROE y cumplir el mínimo.
+                    # Esta es una condición común para ambos caminos de crecimiento.
+                    has_strong_roe = roe is not None and roe >= self.MIN_ROE
+                    roe_strong = has_strong_roe  # Guardamos para el scoring
+
+                    if not has_strong_roe:
+                        strong_growth = False
+                    else:
+                        # Ahora evaluamos los dos caminos posibles, sabiendo que el ROE es bueno.
+                        # Camino 1: Líder de Crecimiento Clásico (altos ingresos)
+                        has_classic_growth = revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH
+                        
+                        # Camino 2: Central de Productividad (beneficios excepcionales con ingresos decentes)
+                        is_profit_powerhouse = (
+                            quarterly_earnings_growth is not None and 
+                            quarterly_earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and
+                            revenue_growth is not None and
+                            revenue_growth >= self.DECENT_REVENUE_GROWTH
+                        )
+
+                        strong_growth = has_classic_growth or is_profit_powerhouse
+                except Exception as e:
+                    print(f"    - {symbol} Error en filtro de crecimiento: {e}")
                     strong_growth = False
             if not strong_growth:
-                return reject_and_return(stage_analysis, f"Growth insuficiente (Revenue <{self.MIN_REVENUE_GROWTH*100}% o ROE <{self.MIN_ROE*100}%)", passes_technical=True)
+                return reject_and_return(stage_analysis, "Growth/Profitability insuficiente", passes_technical=True)
 
             # FILTRO 8: EVIDENCIA INSTITUCIONAL
             institutional_evidence = False
