@@ -116,8 +116,8 @@
         }
 
         .breadth-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            display: grid; /* Se ajustará a 2 columnas */
+            grid-template-columns: repeat(2, 1fr);
             gap: 8px;
         }
 
@@ -571,23 +571,18 @@
             if (marketAnalysis && marketAnalysis.pct_above_ma200 !== undefined) {
                 const maClass = getBreadthClass(marketAnalysis.pct_above_ma200, { strong: 60, neutral: 40 });
                 const rsClass = getBreadthClass(marketAnalysis.pct_rs_strong, { strong: 50, neutral: 30 });
-                const scoreClass = getBreadthClass(data.summary.avg_minervini_score, { strong: 60, neutral: 40 });
 
                 marketBreadthHtml = `
                     <div class="market-breadth">
                         <div class="section-title">🌡️ Amplitud del Mercado</div>
                         <div class="breadth-grid">
                             <div class="breadth-item">
-                                <div class="breadth-value ${maClass}">${marketAnalysis.pct_above_ma200.toFixed(1)}%</div>
+                                <div class="breadth-value ${maClass}">${marketAnalysis.pct_above_ma200.toFixed(0)}%</div>
                                 <div class="summary-label">> MA200</div>
                             </div>
                             <div class="breadth-item">
-                                <div class="breadth-value ${rsClass}">${marketAnalysis.pct_rs_strong.toFixed(1)}%</div>
+                                <div class="breadth-value ${rsClass}">${marketAnalysis.pct_rs_strong.toFixed(0)}%</div>
                                 <div class="summary-label">RS > 70</div>
-                            </div>
-                            <div class="breadth-item">
-                                <div class="breadth-value ${scoreClass}">${data.summary.avg_minervini_score.toFixed(1)}</div>
-                                <div class="summary-label">Score Avg</div>
                             </div>
                         </div>
                     </div>
@@ -692,15 +687,15 @@
 
                 marketHealthHtml = `
                     <div class="market-health">
-                        <div class="section-title">🌡️ Salud del Mercado</div>
+                        <div class="section-title">📊 Distribución por Stage</div>
                         <div class="chart-container">
                 `;
 
                 for (const [name, details] of Object.entries(stages)) {
                     const percentage = totalStocks > 0 ? (details.value / totalStocks) * 100 : 0;
                     marketHealthHtml += `
-                        <div class="chart-bar" style="height: ${percentage}%; background-color: ${details.color};">
-                            <div class="bar-value">${details.value}</div>
+                        <div class="chart-bar" style="height: ${percentage > 5 ? percentage : 5}%; background-color: ${details.color};">
+                            <div class="bar-value">${percentage.toFixed(0)}%</div>
                             <div class="bar-label">${name}</div>
                         </div>
                     `;

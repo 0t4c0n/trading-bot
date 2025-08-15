@@ -11,6 +11,18 @@ import numpy as np
 class MinerviniStockScreener:
     def __init__(self):
         self.stock_symbols = []
+        # --- CONSTANTES DE FILTRADO MINERVINI ---
+        # Hacer estos valores configurables facilita el ajuste de la sensibilidad del screener.
+        self.MIN_RS_RATING = 70
+        self.MIN_PCT_ABOVE_LOW = 30.0  # El precio debe estar al menos un 30% por encima del mínimo de 52s.
+        self.MAX_PCT_BELOW_HIGH = 25.0 # El precio debe estar a menos del 25% del máximo de 52s.
+        self.MIN_EARNINGS_GROWTH = 0.25 # Crecimiento trimestral de beneficios (YoY) >= 25%
+        self.MIN_REVENUE_GROWTH = 0.20  # Crecimiento de ingresos >= 20%
+        self.MIN_ROE = 0.17             # Retorno sobre el patrimonio (ROE) >= 17%
+        # --- CONSTANTES PARA EXCEPCIÓN DE LÍDERES DE MERCADO ---
+        # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
+        self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
+        self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
 
     def get_nyse_nasdaq_symbols(self):
         """Obtiene símbolos de NYSE y NASDAQ combinados"""
@@ -399,16 +411,15 @@ class MinerviniStockScreener:
                 result['stage_analysis'] = stage
                 result['filter_reasons'] = [reason]
                 result['passes_minervini_technical'] = passes_technical
-                # Detectar si el fallo es fundamental (ocurre después de pasar los filtros técnicos)
                 is_fundamental_failure = passes_technical
                 analysis_for_scoring = {
                     'stage_analysis': stage,
                     'rs_rating': rs_rating,
-                    'is_fundamental_failure': is_fundamental_failure
+                    'is_fundamental_failure': is_fundamental_failure,
+                    # Se incluye 'is_extended' para que la penalización por extensión se aplique
+                    # también a las acciones rechazadas, haciendo el scoring más consistente.
+                    'is_extended': result.get('is_extended', False)
                 }
-                # El score de una acción rechazada no debe tener bonificación por punto de entrada
-                # ni penalización por estar extendida, ya que no es candidata.
-                # Por eso no se pasan 'is_extended' ni 'is_actionable_entry' aquí.
                 result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
                 return result
 
@@ -446,24 +457,33 @@ class MinerviniStockScreener:
             # FILTRO 3: POSICIÓN EN RANGO DE 52 SEMANAS
             if high_52w and low_52w:
                 distance_from_low = ((current_price - low_52w) / low_52w) * 100
-                price_above_30pct_low = distance_from_low >= 30
+                price_above_low_threshold = distance_from_low >= self.MIN_PCT_ABOVE_LOW
             else:
                 return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w")
-            if not price_above_30pct_low:
-                return reject_and_return('Stage 2 (Developing)', f"Precio no está 30%+ sobre mínimo 52w ({distance_from_low:.1f}%)")
 
+            if not price_above_low_threshold:
+                # --- EXCEPCIÓN PARA LÍDERES DE BAJA VOLATILIDAD ---
+                # Si la acción está muy cerca de su máximo (ej. <5%) y tiene un RS muy alto (ej. >85),
+                # se le permite pasar aunque no esté un 30% sobre el mínimo.
+                # Esto captura a los líderes que han subido de forma constante sin grandes correcciones.
+                is_strong_leader_candidate = high_52w and ((high_52w - current_price) / high_52w) * 100 < self.STRONG_LEADER_MAX_PCT_BELOW_HIGH
+                is_high_rs = rs_rating is not None and rs_rating > self.STRONG_LEADER_MIN_RS
+                
+                if not (is_strong_leader_candidate and is_high_rs):
+                    return reject_and_return('Stage 2 (Developing)', f"Precio no está {self.MIN_PCT_ABOVE_LOW}%+ sobre mínimo 52w ({distance_from_low:.1f}%)")
+            
             if high_52w:
                 distance_from_high = ((high_52w - current_price) / high_52w) * 100
-                price_near_high = distance_from_high <= 25
+                price_near_high = distance_from_high <= self.MAX_PCT_BELOW_HIGH
             else:
                 return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w")
             if not price_near_high:
-                return reject_and_return('Stage 2 (Developing)', f"Precio no está dentro del 25% del máximo 52w ({distance_from_high:.1f}%)")
+                return reject_and_return('Stage 2 (Developing)', f"Precio no está dentro del {self.MAX_PCT_BELOW_HIGH}% del máximo 52w ({distance_from_high:.1f}%)")
 
             # FILTRO 4: FUERZA RELATIVA
-            rs_strong = rs_rating is not None and rs_rating >= 70
+            rs_strong = rs_rating is not None and rs_rating >= self.MIN_RS_RATING
             if not rs_strong:
-                return reject_and_return('Stage 2 (Developing)', f"RS Rating insuficiente (<70): {rs_rating}")
+                return reject_and_return('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING}): {rs_rating}")
 
             # FILTRO 5: PATRONES DE PRECIO/VOLUMEN (más caros de calcular)
             vcp_detected = result['vcp_detected']
@@ -503,7 +523,7 @@ class MinerviniStockScreener:
                 try:
                     quarterly_earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
                     if quarterly_earnings_growth is not None:
-                        strong_earnings = quarterly_earnings_growth >= 0.25
+                        strong_earnings = quarterly_earnings_growth >= self.MIN_EARNINGS_GROWTH
                         earnings_acceleration = quarterly_earnings_growth > 0.3  # >30% como proxy de aceleración
                     else:
                         net_income = ticker_info.get('netIncomeToCommon')
@@ -511,7 +531,7 @@ class MinerviniStockScreener:
                 except:
                     strong_earnings = False
             if not strong_earnings:
-                return reject_and_return(stage_analysis, "Earnings insuficientes (<25% YoY)", passes_technical=True)
+                return reject_and_return(stage_analysis, f"Earnings insuficientes (<{self.MIN_EARNINGS_GROWTH*100}% YoY)", passes_technical=True)
 
             # FILTRO 7: GROWTH (REVENUE + ROE)
             strong_growth = False
@@ -520,13 +540,13 @@ class MinerviniStockScreener:
                 try:
                     revenue_growth = ticker_info.get('revenueGrowth')
                     roe = ticker_info.get('returnOnEquity')
-                    revenue_strong = revenue_growth >= 0.20 if revenue_growth else False
-                    roe_strong = roe >= 0.17 if roe else False
+                    revenue_strong = revenue_growth >= self.MIN_REVENUE_GROWTH if revenue_growth else False
+                    roe_strong = roe >= self.MIN_ROE if roe else False
                     strong_growth = revenue_strong and roe_strong
                 except:
                     strong_growth = False
             if not strong_growth:
-                return reject_and_return(stage_analysis, "Growth insuficiente (Revenue <20% o ROE <17%)", passes_technical=True)
+                return reject_and_return(stage_analysis, f"Growth insuficiente (Revenue <{self.MIN_REVENUE_GROWTH*100}% o ROE <{self.MIN_ROE*100}%)", passes_technical=True)
 
             # FILTRO 8: EVIDENCIA INSTITUCIONAL
             institutional_evidence = False

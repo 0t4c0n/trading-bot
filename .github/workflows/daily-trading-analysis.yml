@@ -3,11 +3,10 @@ name: Minervini SEPA Analysis Diario
 
 on:
   schedule:
-    # Ejecutar Lunes a Viernes 5 horas después del cierre del mercado US
-    # Mercado US: 9:30 AM - 4:00 PM EST = 14:30 - 20:00 UTC (horario estándar)
-    # Mercado US: 9:30 AM - 4:00 PM EDT = 13:30 - 19:00 UTC (horario de verano)
-    - cron: '0 1 * * 2-6'   # 01:00 UTC = 5h después del cierre en horario estándar (Martes-Sábado UTC)
-    - cron: '0 0 * * 2-6'   # 00:00 UTC = 5h después del cierre en horario de verano (Martes-Sábado UTC)
+    # Ejecutar de Lunes a Viernes, 5-6 horas después del cierre del mercado de EE. UU.
+    # Se usa una hora UTC fija (01:00) que funciona para ambos horarios (estándar y verano).
+    # Martes a Sábado en UTC para cubrir los días de mercado de Lunes a Viernes.
+    - cron: '0 1 * * 2-6' # 01:00 UTC
   workflow_dispatch:  # Permitir ejecución manual
 
 # PERMISOS NECESARIOS PARA GITHUB PAGES
