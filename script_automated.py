@@ -629,7 +629,7 @@ class MinerviniStockScreener:
                     print(f"    - {symbol} Error en filtro de crecimiento: {e}")
                     strong_growth = False
             if not strong_growth:
-                return reject_and_return(stage_analysis, "Growth/Profitability insuficiente", passes_technical=True)
+                return reject_and_return(stage_analysis, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", passes_technical=True)
 
             # FILTRO 8: EVIDENCIA INSTITUCIONAL
             institutional_evidence = False
