@@ -30,6 +30,24 @@ def get_rs_strength_label(rs_rating):
     else:
         return "❌ Weak"
 
+def convert_numpy_types(obj):
+    """Convierte tipos numpy/pandas a tipos JSON serializables"""
+    import numpy as np
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
+
 def create_minervini_dashboard_data():
     """Convierte los resultados Minervini en datos JSON para dashboard"""
     
@@ -120,9 +138,9 @@ def create_minervini_dashboard_data():
             all_sorted = all_df.sort_values(by=['Passes_All_Filters', 'Minervini_Score'], ascending=[False, False])
             
             # Top 15 para dashboard (mostraremos top 10, pero calculamos más por si hay empates)
-            top_stocks = all_sorted.head(15)
+            top_stocks = all_sorted.head(10)
             
-            for i, (_, row) in enumerate(top_stocks.head(10).iterrows()):
+            for i, (_, row) in enumerate(top_stocks.iterrows()):
                 stage = row.get('Stage_Analysis', 'Unknown')
                 rs_rating = row.get('RS_Rating', 0)
                 score = row.get('Minervini_Score', 0)
@@ -172,9 +190,9 @@ def create_minervini_dashboard_data():
                         "is_extended": bool(row.get('Is_Extended', False))
                     },
                     "ma_levels": {
-                        "ma_50": float(row['MA_50']) if pd.notna(row.get('MA_50')) else 0.0,
-                        "ma_150": float(row['MA_150']) if pd.notna(row.get('MA_150')) else 0.0,
-                        "ma_200": float(row['MA_200']) if pd.notna(row.get('MA_200')) else 0.0
+                        "ma_50": float(row.get('MA_50')) if pd.notna(row.get('MA_50')) else 0.0,
+                        "ma_150": float(row.get('MA_150')) if pd.notna(row.get('MA_150')) else 0.0,
+                        "ma_200": float(row.get('MA_200')) if pd.notna(row.get('MA_200')) else 0.0
                     }
                 }
                 dashboard_data["top_picks"].append(pick)
@@ -311,24 +329,6 @@ def create_minervini_dashboard_data():
         # Guardar JSON con conversión de tipos numpy
         json_path = 'docs/data.json'
         print(f"Guardando JSON Minervini en: {json_path}")
-        
-        def convert_numpy_types(obj):
-            """Convierte tipos numpy/pandas a tipos JSON serializables"""
-            import numpy as np
-            if isinstance(obj, dict):
-                return {key: convert_numpy_types(value) for key, value in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy_types(item) for item in obj]
-            elif isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, np.floating):
-                return float(obj)
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif pd.isna(obj):
-                return None
-            else:
-                return obj
         
         try:
             # Convertir todos los tipos numpy antes de serializar

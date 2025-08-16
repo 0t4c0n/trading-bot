@@ -5,19 +5,21 @@ import json
 from pprint import pprint
 
 # Importa la clase principal desde tu script original
-from script_automated import MinerviniStockScreener
+from script_automated import MinerviniStockScreener, get_ticker_info_with_cache
 
 # --- CONFIGURACIÓN ---
 # ▼▼▼ ¡AQUÍ ES DONDE PONES LA ACCIÓN QUE QUIERES DEBUGEAR! ▼▼▼
-TICKER_TO_DEBUG = "ISSC"  # Cambia "NVDA" por el símbolo que quieras analizar
+TICKER_TO_DEBUG = "RSI"  # Cambia "NVDA" por el símbolo que quieras analizar
 # Simula un RS Rating para el análisis. Minervini requiere >= 70.
 # Puedes cambiar este valor para ver cómo afecta al resultado.
-SIMULATED_RS_RATING = 85 
+SIMULATED_RS_RATING = 85
+# Elige si el debug debe usar el sistema de caché o llamar siempre a la API en vivo.
+USE_CACHE_IN_DEBUG = False # Poner en True para probar la lógica de caché.
 # --- FIN DE LA CONFIGURACIÓN ---
 
 def debug_single_stock(symbol, rs_rating):
     """
-    Ejecuta el análisis Minervini completo para una única acción y muestra los resultados detallados.
+    Ejecuta el análisis Minervini en modo DEBUG para una única acción.
     """
     print(f"🕵️  Iniciando debug para: {symbol}")
     print(f"📊  Simulando un RS Rating de: {rs_rating} (el filtro requiere >= 70)")
@@ -41,18 +43,34 @@ def debug_single_stock(symbol, rs_rating):
         return
 
     # 2. Descargar información fundamental (.info)
-    print(f"2. Descargando datos fundamentales (.info) para {symbol}...")
-    try:
-        ticker_info = ticker_obj.info
-        if not ticker_info or 'sector' not in ticker_info:
-             print(f"❌ Error: .info devuelto vacío o incompleto para {symbol}.")
-             # Aún así intentamos continuar, puede que algunos filtros fallen pero otros funcionen
-             ticker_info = {}
-        print("✓ Datos fundamentales descargados.")
-    except Exception as e:
-        print(f"❌ Error al descargar .info: {e}")
-        # Continuamos sin datos fundamentales para ver los filtros técnicos
-        ticker_info = {}
+    if USE_CACHE_IN_DEBUG:
+        print(f"2. Obteniendo datos fundamentales para {symbol} (usando sistema de caché)...")
+        ticker_info = get_ticker_info_with_cache(symbol)
+        print("✓ Datos fundamentales obtenidos vía caché.")
+    else:
+        print(f"2. Descargando datos fundamentales (.info) para {symbol} (llamada en vivo)...")
+        try:
+            ticker_info = ticker_obj.info
+            if not ticker_info or 'sector' not in ticker_info:
+                print(f"❌ Error: .info devuelto vacío o incompleto para {symbol}.")
+                ticker_info = {}
+            print("✓ Datos fundamentales descargados.")
+        except Exception as e:
+            print(f"❌ Error al descargar .info: {e}")
+            ticker_info = {}
+
+    # 2.5. Verificar datos fundamentales clave
+    print("2.5. Verificando disponibilidad de datos fundamentales clave...")
+    required_keys = ['earningsQuarterlyGrowth', 'returnOnEquity', 'netIncomeToCommon']
+    missing_keys = [key for key in required_keys if key not in ticker_info or ticker_info[key] is None]
+    
+    if missing_keys:
+        print(f"   ⚠️  AVISO: Faltan datos fundamentales clave en la respuesta de la API:")
+        for key in missing_keys:
+            print(f"      - '{key}' no encontrado o es None.")
+        print("   Esto causará que los filtros fundamentales fallen, lo cual es el comportamiento esperado.")
+    else:
+        print("✓ Todos los datos fundamentales clave están presentes.")
 
     # 3. Calcular Medias Móviles
     print("3. Calculando Medias Móviles (50, 150, 200)...")
@@ -60,41 +78,30 @@ def debug_single_stock(symbol, rs_rating):
     print("✓ Medias Móviles calculadas.")
 
     # 4. Ejecutar el análisis Minervini
-    print("4. Ejecutando el análisis completo de 11 filtros Minervini...")
+    print("\n" + "="*15 + f" INICIANDO ANÁLISIS MINERVINI PARA {symbol} " + "="*15)
     analysis_result = screener.get_minervini_analysis(
         df=hist_with_ma, 
         rs_rating=rs_rating, 
         ticker_info=ticker_info, 
-        symbol=symbol
+        symbol=symbol,
+        debug_mode=True  # <-- ¡AQUÍ ESTÁ LA MAGIA!
     )
-    print("✓ Análisis completado.")
-    print("-" * 40)
+    print("="*17 + " ANÁLISIS MINERVINI COMPLETADO " + "="*17 + "\n")
 
     # 5. Mostrar los resultados de forma clara
-    print(f"✅ RESULTADOS DETALLADOS PARA: {TICKER_TO_DEBUG} ✅")
+    print(f"✅ RESUMEN FINAL PARA: {TICKER_TO_DEBUG} ✅")
     print("-" * 40)
 
     if analysis_result is None:
         print("‼️  ACCIÓN DESCARTADA POR COMPLETO.")
         print("   Razón principal: Beneficios negativos o nulos. El script está configurado para ignorar estas acciones.")
         return
-
-    # Usamos pprint para una visualización más limpia del diccionario
-    pprint(analysis_result)
-
-    # Imprimir un resumen más legible
-    print("\n" + "-"*40)
-    print("🔍 RESUMEN DEL ANÁLISIS:")
+    
     print(f"  - ¿Pasa TODOS los filtros?: {'SÍ' if analysis_result.get('passes_all_filters') else 'NO'}")
     print(f"  - Razón final del filtro: {analysis_result.get('filter_reasons', ['N/A'])[0]}")
     print(f"  - Stage Analysis: {analysis_result.get('stage_analysis', 'N/A')}")
     print(f"  - Minervini Score calculado: {analysis_result.get('minervini_score', 'N/A')}")
-    print("-" * 40)
-    print("\n💡 Para entender el resultado, revisa el diccionario de arriba.")
-    print("   - 'passes_all_filters': te dice si pasó todo.")
-    print("   - 'filter_reasons': te da el motivo exacto por el que fue aceptada o rechazada.")
-    print("   - Compara los valores de 'ma_50', 'ma_150', 'current_price', etc., con los criterios del README.")
-
+    print(f"  - Señal de Entrada: {analysis_result.get('entry_signal', 'N/A')}")
 
 if __name__ == "__main__":
     if not TICKER_TO_DEBUG or TICKER_TO_DEBUG == "TICKER_AQUÍ":

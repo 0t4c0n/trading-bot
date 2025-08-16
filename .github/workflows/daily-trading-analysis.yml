@@ -59,6 +59,21 @@ jobs:
         echo "Generando dashboard Minervini con scoring system..."
         python create_dashboard_data.py
         
+    - name: Commit and Push Ticker Cache
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        # Añadir el directorio de caché al stage
+        git add ticker_info_cache/
+        # Comprobar si hay cambios para comitear
+        if ! git diff --staged --quiet; then
+          echo "Cache changes detected. Committing and pushing..."
+          git commit -m "Chore: Update ticker info cache [skip ci]"
+          git push
+        else
+          echo "No changes to cache. Skipping commit."
+        fi
+        
     - name: Verificar archivos generados
       id: verify_data_file
       run: |
