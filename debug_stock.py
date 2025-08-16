@@ -3,38 +3,52 @@ import yfinance as yf
 import pandas as pd
 import json
 from pprint import pprint
-
 # Importa la clase principal desde tu script original
-from script_automated import MinerviniStockScreener, get_ticker_info_with_cache
+from script_automated import MinerviniStockScreener
 
 # --- CONFIGURACIÓN ---
 # ▼▼▼ ¡AQUÍ ES DONDE PONES LA ACCIÓN QUE QUIERES DEBUGEAR! ▼▼▼
 TICKER_TO_DEBUG = "RSI"  # Cambia "NVDA" por el símbolo que quieras analizar
-# Simula un RS Rating para el análisis. Minervini requiere >= 70.
-# Puedes cambiar este valor para ver cómo afecta al resultado.
-SIMULATED_RS_RATING = 85
-# Elige si el debug debe usar el sistema de caché o llamar siempre a la API en vivo.
-USE_CACHE_IN_DEBUG = False # Poner en True para probar la lógica de caché.
 # --- FIN DE LA CONFIGURACIÓN ---
 
-def debug_single_stock(symbol, rs_rating):
+def calculate_real_rs_rating(stock_df, benchmark_df):
+    """Calcula un RS Rating realista comparando el rendimiento del último año contra un benchmark (SPY)."""
+    if len(stock_df) < 252 or len(benchmark_df) < 252:
+        print("   ⚠️  Datos insuficientes para calcular RS Rating real. Usando 50 como valor por defecto.")
+        return 50.0
+
+    # Rendimiento del último año (252 días de trading)
+    stock_perf = (stock_df['Close'].iloc[-1] / stock_df['Close'].iloc[-252]) - 1
+    benchmark_perf = (benchmark_df['Close'].iloc[-1] / benchmark_df['Close'].iloc[-252]) - 1
+    
+    # Fórmula simple para un RS Rating proxy: 50 es igual al mercado.
+    # Cada 1% de rendimiento superior al mercado suma 1 punto al RS.
+    rs_rating = 50.0 + (stock_perf - benchmark_perf) * 100
+    
+    print(f"   - Rendimiento {TICKER_TO_DEBUG} (1A): {stock_perf:.2%}")
+    print(f"   - Rendimiento SPY (1A): {benchmark_perf:.2%}")
+    
+    # Limitar el RS Rating a un rango realista (1-99)
+    return max(1, min(99, rs_rating))
+
+def debug_single_stock(symbol):
     """
     Ejecuta el análisis Minervini en modo DEBUG para una única acción.
     """
     print(f"🕵️  Iniciando debug para: {symbol}")
-    print(f"📊  Simulando un RS Rating de: {rs_rating} (el filtro requiere >= 70)")
     print("-" * 40)
 
     screener = MinerviniStockScreener()
     
     # 1. Descargar datos históricos para la acción
-    print(f"1. Descargando datos históricos ('2y') para {symbol}...")
+    print(f"1. Descargando datos históricos ('2y') para {symbol} y benchmark (SPY)...")
     try:
-        # Usamos yf.Ticker para obtener los datos de una sola acción
-        ticker_obj = yf.Ticker(symbol)
-        hist_df = ticker_obj.history(period="2y", auto_adjust=True)
+        # Descargar ambos tickers a la vez es más eficiente
+        data = yf.download([symbol, 'SPY'], period="2y", auto_adjust=True, progress=False)
+        hist_df = data.loc[:, (slice(None), symbol)].droplevel(1, axis=1)
+        spy_df = data.loc[:, (slice(None), 'SPY')].droplevel(1, axis=1)
         
-        if hist_df.empty or len(hist_df) < 252:
+        if hist_df.empty or len(hist_df) < 252 or spy_df.empty:
             print(f"❌ Error: No se pudieron descargar suficientes datos para {symbol}. Se necesitan al menos 252 días.")
             return
         print("✓ Datos históricos descargados.")
@@ -42,22 +56,23 @@ def debug_single_stock(symbol, rs_rating):
         print(f"❌ Error al descargar datos históricos: {e}")
         return
 
-    # 2. Descargar información fundamental (.info)
-    if USE_CACHE_IN_DEBUG:
-        print(f"2. Obteniendo datos fundamentales para {symbol} (usando sistema de caché)...")
-        ticker_info = get_ticker_info_with_cache(symbol)
-        print("✓ Datos fundamentales obtenidos vía caché.")
-    else:
-        print(f"2. Descargando datos fundamentales (.info) para {symbol} (llamada en vivo)...")
-        try:
-            ticker_info = ticker_obj.info
-            if not ticker_info or 'sector' not in ticker_info:
-                print(f"❌ Error: .info devuelto vacío o incompleto para {symbol}.")
-                ticker_info = {}
-            print("✓ Datos fundamentales descargados.")
-        except Exception as e:
-            print(f"❌ Error al descargar .info: {e}")
+    # 1.5. Calcular RS Rating real
+    print("1.5. Calculando RS Rating real vs. SPY...")
+    rs_rating = calculate_real_rs_rating(hist_df, spy_df)
+    print(f"📊 RS Rating calculado para {symbol}: {rs_rating:.1f} (el filtro requiere >= 70)")
+
+    # 2. Descargar información fundamental (.info) - Siempre en vivo para el debug
+    print(f"2. Descargando datos fundamentales (.info) para {symbol} (llamada en vivo)...")
+    try:
+        # Usamos yf.Ticker para obtener el .info
+        ticker_info = yf.Ticker(symbol).info
+        if not ticker_info or 'sector' not in ticker_info:
+            print(f"❌ Error: .info devuelto vacío o incompleto para {symbol}.")
             ticker_info = {}
+        print("✓ Datos fundamentales descargados.")
+    except Exception as e:
+        print(f"❌ Error al descargar .info: {e}")
+        ticker_info = {}
 
     # 2.5. Verificar datos fundamentales clave
     print("2.5. Verificando disponibilidad de datos fundamentales clave...")
@@ -107,4 +122,4 @@ if __name__ == "__main__":
     if not TICKER_TO_DEBUG or TICKER_TO_DEBUG == "TICKER_AQUÍ":
         print("Por favor, edita este script y cambia la variable 'TICKER_TO_DEBUG' por la acción que quieres analizar.")
     else:
-        debug_single_stock(TICKER_TO_DEBUG, SIMULATED_RS_RATING)
+        debug_single_stock(TICKER_TO_DEBUG)

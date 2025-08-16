@@ -11,7 +11,7 @@ on:
 
 # PERMISOS NECESARIOS PARA GITHUB PAGES
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -63,8 +63,8 @@ jobs:
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-        # Añadir el directorio de caché al stage
-        git add ticker_info_cache/
+        # Añadir el archivo de caché unificado al stage
+        git add ticker_info_cache/ticker_cache.json
         # Comprobar si hay cambios para comitear
         if ! git diff --staged --quiet; then
           echo "Cache changes detected. Committing and pushing..."

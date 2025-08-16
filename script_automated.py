@@ -759,7 +759,7 @@ class MinerviniStockScreener:
         
         return "Consolidando", False
     
-    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, info_fetcher_func):
+    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, cache_manager):
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
         stock_data = {}
         failed_symbols = []
@@ -780,8 +780,8 @@ class MinerviniStockScreener:
                         hist_with_ma = self.calculate_moving_averages(hist)
                         
                         try:
-                            # La llamada de red para .info ahora usa la función con caché
-                            ticker_info = info_fetcher_func(symbol)
+                            # La llamada de red para .info ahora usa el gestor de caché
+                            ticker_info = fetch_info_for_symbol(symbol, cache_manager)
                             company_info = {
                                 'name': ticker_info.get('longName', 'N/A'),
                                 'sector': ticker_info.get('sector', 'N/A'),
@@ -1024,55 +1024,87 @@ class MinerviniStockScreener:
         
         return all_df, stage2_df
 
-def get_ticker_info_with_cache(symbol, ttl_hours=168): # 7 días
+class TickerInfoCacheManager:
     """
-    Obtiene .info de yfinance con un sistema de caché con TTL (Time-To-Live).
-    1. Comprueba si existe un caché y si es reciente (dentro del TTL).
-    2. Si es reciente, lo usa.
-    3. Si no existe o está obsoleto, llama a la API.
-    4. Si la API falla, usa el caché obsoleto como último recurso.
+    Gestiona un caché de datos de tickers en un único archivo JSON para evitar
+    crear miles de archivos en el repositorio.
     """
-    cache_dir = "ticker_info_cache"
-    os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"{symbol}.json")
-    
-    cache_exists = os.path.exists(cache_file)
+    def __init__(self, cache_path="ticker_info_cache/ticker_cache.json", ttl_hours=168):
+        self.cache_path = cache_path
+        self.ttl_seconds = ttl_hours * 3600
+        self.cache_data = self._load_cache()
+        self.updated = False
 
-    # 1. Comprobar si el caché existe y es reciente
-    if cache_exists:
-        try:
-            file_mod_time = os.path.getmtime(cache_file)
-            # Comprobar si el archivo es más joven que el TTL
-            if (time.time() - file_mod_time) < (ttl_hours * 3600):
-                with open(cache_file, 'r') as f:
+    def _load_cache(self):
+        """Carga el archivo de caché JSON si existe."""
+        if os.path.exists(self.cache_path):
+            try:
+                with open(self.cache_path, 'r') as f:
+                    print(f"✓ Caché de .info cargado desde {self.cache_path}")
                     return json.load(f)
-        except Exception as e:
-            print(f"  - Aviso: No se pudo leer el caché para {symbol}: {e}")
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"⚠️ No se pudo cargar el caché de .info, se creará uno nuevo. Error: {e}")
+                return {}
+        print("ℹ️ No se encontró caché de .info, se creará uno nuevo.")
+        return {}
 
-    # 2. Si el caché no existe o está obsoleto, llamar a la API
+    def get(self, symbol):
+        """Obtiene datos del caché si no están obsoletos."""
+        if symbol in self.cache_data:
+            entry = self.cache_data[symbol]
+            if (time.time() - entry.get('timestamp', 0)) < self.ttl_seconds:
+                return entry.get('data')
+        return None
+
+    def get_stale(self, symbol):
+        """Obtiene datos del caché, incluso si están obsoletos (para fallback)."""
+        if symbol in self.cache_data:
+            return self.cache_data[symbol].get('data')
+        return None
+
+    def set(self, symbol, data):
+        """Actualiza el caché en memoria para un símbolo."""
+        self.cache_data[symbol] = {
+            'timestamp': time.time(),
+            'data': data
+        }
+        self.updated = True
+
+    def save_cache_if_updated(self):
+        """Guarda el caché en disco solo si ha habido cambios."""
+        if self.updated:
+            print(f"\n💾 Guardando caché de .info actualizado en {self.cache_path}...")
+            cache_dir = os.path.dirname(self.cache_path)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
+            
+            with open(self.cache_path, 'w') as f:
+                json.dump(self.cache_data, f)
+            print("✓ Caché guardado.")
+        else:
+            print("\nℹ️ No hubo actualizaciones en el caché de .info, no se guarda nada.")
+
+def fetch_info_for_symbol(symbol, cache_manager):
+    """
+    Obtiene .info de yfinance, usando el TickerInfoCacheManager.
+    """
+    cached_info = cache_manager.get(symbol)
+    if cached_info:
+        return cached_info
+
     try:
         ticker = yf.Ticker(symbol)
         ticker_info = ticker.info
-        
-        # 3. Si la llamada es exitosa y devuelve datos, guardar en caché
         if ticker_info and 'symbol' in ticker_info:
-            with open(cache_file, 'w') as f:
-                json.dump(ticker_info, f)
+            cache_manager.set(symbol, ticker_info)
             return ticker_info
         else:
             raise ValueError("API returned empty or invalid info.")
     except Exception as e:
-        # 4. Si la API falla, usar el caché obsoleto como último recurso
-        if cache_exists:
-            print(f"  - ⚠️ API falló para {symbol} ({e}). Usando caché OBSOLETO como fallback.")
-            try:
-                with open(cache_file, 'r') as f:
-                    return json.load(f)
-            except Exception as read_err:
-                print(f"  - ❌ No se pudo leer ni el caché obsoleto para {symbol}: {read_err}")
-                return {} # Fallo total
-        
-        # Si la API falla y no hay caché, es un fallo total
+        print(f"  - ⚠️ API falló para {symbol} ({e}). Usando caché obsoleto como fallback si existe.")
+        stale_info = cache_manager.get_stale(symbol)
+        if stale_info:
+            return stale_info
         return {}
 
 def main():
@@ -1082,6 +1114,7 @@ def main():
     print("11 filtros: 8 técnicos + 3 fundamentales + Scoring System\n")
     
     screener = MinerviniStockScreener()
+    cache_manager = TickerInfoCacheManager()
     
     print("Obteniendo símbolos NYSE + NASDAQ...")
     all_symbols = screener.get_nyse_nasdaq_symbols()
@@ -1124,7 +1157,7 @@ def main():
         print(f"\n=== LOTE {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx}) ===")
         
         # La función ahora recibe los datos históricos y solo descarga .info si es necesario
-        batch_data, batch_failed = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, get_ticker_info_with_cache)
+        batch_data, batch_failed = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager)
         
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
@@ -1189,6 +1222,9 @@ def main():
         for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
             percentage = (count / total_stocks) * 100
             print(f"  {reason}: {count} acciones ({percentage:.1f}%)")
+
+        # Guardar el caché al final de todo el proceso
+        cache_manager.save_cache_if_updated()
         
     else:
         print("❌ No se obtuvieron datos")
