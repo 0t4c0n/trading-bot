@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import json
 from io import StringIO
 import os
+from tqdm import tqdm
 import numpy as np
 
 class MinerviniStockScreener:
@@ -415,6 +416,124 @@ class MinerviniStockScreener:
             print(f"Error calculando Minervini Score: {e}")
             return 0
     
+    # --- FUNCIONES AUXILIARES DE FILTRADO (REFACTORIZACIÓN) ---
+    # Estas funciones descomponen la lógica de get_minervini_analysis para mayor claridad.
+
+    def _build_rejection_result(self, result, stage, reason, passes_technical, debug_mode=False, filter_name=""):
+        """Construye y devuelve el diccionario de resultados para una acción rechazada."""
+        if debug_mode:
+            print(f"    ❌ RECHAZADO [{filter_name}]: {reason}")
+        
+        result['stage_analysis'] = stage
+        result['filter_reasons'] = [reason]
+        result['passes_minervini_technical'] = passes_technical
+        is_fundamental_failure = passes_technical  # True si el fallo es fundamental (ya pasó lo técnico)
+
+        # Para que el score de las acciones rechazadas sea más preciso,
+        # calculamos las distancias y las pasamos al scorer.
+        current_price = result.get('current_price', 0)
+        high_52w = result.get('high_52w')
+        low_52w = result.get('low_52w')
+        
+        dist_from_high = ((high_52w - current_price) / high_52w) * 100 if high_52w and current_price else 100
+        dist_from_low = ((current_price - low_52w) / low_52w) * 100 if low_52w and current_price else 0
+
+        analysis_for_scoring = {
+            'stage_analysis': stage,
+            'rs_rating': result.get('rs_rating', 0),
+            'is_fundamental_failure': is_fundamental_failure,
+            'distance_to_52w_high': dist_from_high,
+            'distance_from_52w_low': dist_from_low,
+            'is_extended': result.get('is_extended', False)
+        }
+        result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
+        return result
+
+    def _check_trend_and_mas(self, current_price, ma_50, ma_150, ma_200, df):
+        """Filtro 1 y 2: Valida la tendencia de largo plazo y la jerarquía de las medias móviles."""
+        if not all(pd.notna(x) for x in [current_price, ma_50, ma_150, ma_200]):
+            return False, "Datos de MAs incompletos"
+
+        if not (current_price > ma_150 and current_price > ma_200):
+            return False, "Precio por debajo de MA150 o MA200"
+
+        if not (ma_150 > ma_200):
+            return False, "MA150 no está por encima de MA200"
+
+        ma200_22_days_ago = df['MA_200'].iloc[-22] if len(df) > 22 else None
+        if not (ma200_22_days_ago and pd.notna(ma200_22_days_ago) and ma_200 > ma200_22_days_ago):
+            return False, "MA200 no tiene tendencia alcista ≥1 mes"
+
+        if not (current_price > ma_50 > ma_150 > ma_200):
+            return False, "Jerarquía MAs incorrecta (Price>MA50>MA150>MA200)"
+
+        return True, ""
+
+    def _check_52_week_range_position(self, current_price, high_52w, low_52w, rs_rating):
+        """Filtro 3: Valida la posición del precio dentro del rango de 52 semanas."""
+        if not all([current_price, high_52w, low_52w]):
+            return False, "No se pudo calcular rango 52w", None, None
+
+        distance_from_low = ((current_price - low_52w) / low_52w) * 100
+        distance_from_high = ((high_52w - current_price) / high_52w) * 100
+
+        price_above_low_threshold = distance_from_low >= self.MIN_PCT_ABOVE_LOW
+        if not price_above_low_threshold:
+            # Excepción para líderes de mercado fuertes
+            is_strong_leader_candidate = distance_from_high < self.STRONG_LEADER_MAX_PCT_BELOW_HIGH
+            is_high_rs = rs_rating is not None and rs_rating > self.STRONG_LEADER_MIN_RS
+            if not (is_strong_leader_candidate and is_high_rs):
+                return False, "Precio no está 30%+ sobre mínimo 52w", distance_from_low, distance_from_high
+
+        price_near_high = distance_from_high <= self.MAX_PCT_BELOW_HIGH
+        if not price_near_high:
+            return False, "Precio no está dentro del 25% del máximo 52w", distance_from_low, distance_from_high
+
+        return True, "", distance_from_low, distance_from_high
+
+    def _check_price_volume_pattern(self, df, vcp_analysis, volume_50d_avg):
+        """Filtro 5: Valida si existe un patrón de precio/volumen constructivo."""
+        institutional_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
+        pattern_score, _ = self.get_pattern_score(vcp_analysis, institutional_accumulation)
+        
+        if pattern_score < self.MIN_PATTERN_SCORE:
+            return False, f"Patrón de precio/volumen insuficiente (Score: {pattern_score})", pattern_score, institutional_accumulation
+        
+        return True, "", pattern_score, institutional_accumulation
+
+    def _check_fundamental_health(self, ticker_info):
+        """Filtros 0, 6 y 7: Valida la salud fundamental (beneficios, crecimiento, ROE)."""
+        if not ticker_info:
+            return False, "Datos fundamentales no disponibles", False, False
+
+        # Filtro 0: Beneficios positivos
+        net_income = ticker_info.get('netIncomeToCommon')
+        if net_income is not None and net_income <= 0:
+            return None, f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)", False, False
+
+        # Filtro 6: Crecimiento de beneficios
+        earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
+        if earnings_growth is None or earnings_growth < self.MIN_EARNINGS_GROWTH:
+            return False, "Earnings growth <25.0% YoY o dato no disponible", False, False
+        
+        earnings_acceleration = earnings_growth > 0.3
+
+        # Filtro 7: Crecimiento de ingresos y ROE (Lógica Inteligente)
+        revenue_growth = ticker_info.get('revenueGrowth')
+        roe = ticker_info.get('returnOnEquity')
+        
+        has_strong_roe = roe is not None and roe >= self.MIN_ROE
+        if not has_strong_roe:
+            return False, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", earnings_acceleration, False
+
+        has_classic_growth = revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH
+        is_profit_powerhouse = earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and revenue_growth is not None and revenue_growth >= self.DECENT_REVENUE_GROWTH
+        
+        if not (has_classic_growth or is_profit_powerhouse):
+            return False, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", earnings_acceleration, True
+
+        return True, "", earnings_acceleration, True
+
     def get_minervini_analysis(self, df, rs_rating, ticker_info=None, symbol="UNKNOWN", debug_mode=False):
         """Análisis completo y optimizado con 'early exit' según metodología SEPA de Minervini"""
         # --- INICIALIZAR DICCIONARIO DE RESULTADOS ---
@@ -476,252 +595,75 @@ class MinerviniStockScreener:
             entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
             result['entry_signal'] = entry_signal
 
-            # --- EMBUDO DE FILTRADO TÉCNICO (EARLY EXIT) ---
-            def reject_and_return(stage, reason, passes_technical=False, filter_name=""):
-                """Función interna para actualizar y devolver el diccionario de resultados en caso de rechazo."""
-                if debug_mode:
-                    print(f"    ❌ RECHAZADO [{filter_name}]: {reason}")
-                result['stage_analysis'] = stage
-                result['filter_reasons'] = [reason]
-                result['passes_minervini_technical'] = passes_technical
-                is_fundamental_failure = passes_technical # True if it's a fundamental failure
-                
-                # Para que el score de las acciones rechazadas sea más preciso,
-                # calculamos las distancias y las pasamos al scorer.
-                dist_from_high = ((high_52w - current_price) / high_52w) * 100 if high_52w else 100
-                dist_from_low = ((current_price - low_52w) / low_52w) * 100 if low_52w else 0
+            # --- EMBUDO DE FILTRADO SECUENCIAL (REFACTORIZADO) ---
 
-                analysis_for_scoring = {
-                    'stage_analysis': stage,
-                    'rs_rating': rs_rating,
-                    'is_fundamental_failure': is_fundamental_failure,
-                    'distance_to_52w_high': dist_from_high,
-                    'distance_from_52w_low': dist_from_low,
-                    'is_extended': result.get('is_extended', False)
-                }
-                result['minervini_score'] = self.calculate_minervini_score(analysis_for_scoring)
-                return result
+            # FILTROS TÉCNICOS
+            passed, reason = self._check_trend_and_mas(current_price, ma_50, ma_150, ma_200, df)
+            if not passed: return self._build_rejection_result(result, 'Stage 1/3/4', reason, False, debug_mode, "Tendencia/MAs")
 
-            # FILTRO 1: TENDENCIA DE LARGO PLAZO (los más importantes y baratos)
-            price_above_long_mas = current_price > ma_150 and current_price > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
-            if debug_mode: print(f"    [Filtro 1.1] Precio > MA150/200: {'✅' if price_above_long_mas else '❌'}")
-            if not price_above_long_mas:
-                return reject_and_return('Stage 4 (Decline)', "Precio por debajo de MA150 o MA200", filter_name="Tendencia Largo Plazo")
+            passed, reason, dist_low, dist_high = self._check_52_week_range_position(current_price, high_52w, low_52w, rs_rating)
+            if not passed: return self._build_rejection_result(result, 'Stage 2 (Developing)', reason, False, debug_mode, "Rango 52w")
+            distance_from_low, distance_from_high = dist_low, dist_high # Guardar para el score final
 
-            ma150_above_ma200 = ma_150 > ma_200 if pd.notna(ma_150) and pd.notna(ma_200) else False
-            if debug_mode: print(f"    [Filtro 1.2] MA150 > MA200: {'✅' if ma150_above_ma200 else '❌'}")
-            if not ma150_above_ma200:
-                return reject_and_return('Stage 1/3 (Base/Top)', "MA150 no está por encima de MA200", filter_name="Alineación MAs")
+            if not (rs_rating is not None and rs_rating >= self.MIN_RS_RATING):
+                return self._build_rejection_result(result, 'Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING})", False, debug_mode, "RS Rating")
 
-            ma200_trending_up = False
-            if pd.notna(ma_200):
-                ma200_22_days_ago = df['MA_200'].iloc[-22]
-                ma200_trending_up = ma_200 > ma200_22_days_ago if pd.notna(ma200_22_days_ago) else False
-            if debug_mode: print(f"    [Filtro 1.3] MA200 Tendencia Alcista: {'✅' if ma200_trending_up else '❌'}")
-            if not ma200_trending_up:
-                return reject_and_return('Stage 1/3 (Base/Top)', "MA200 no tiene tendencia alcista ≥1 mes", filter_name="Tendencia MA200")
-
-            # FILTRO 2: JERARQUÍA DE MEDIAS MÓVILES
-            ma_hierarchy = (current_price > ma_50 > ma_150 > ma_200) if all(pd.notna(x) for x in [ma_10, ma_21, ma_50, ma_150, ma_200]) else False
-            if debug_mode: print(f"    [Filtro 2] Jerarquía MAs (P>50>150>200): {'✅' if ma_hierarchy else '❌'}")
-            if not ma_hierarchy:
-                return reject_and_return('Stage 2 (Developing)', "Jerarquía MAs incorrecta (Price>MA50>MA150>MA200)", filter_name="Jerarquía MAs")
-
-            # FILTRO 3: POSICIÓN EN RANGO DE 52 SEMANAS
-            if high_52w and low_52w:
-                distance_from_low = ((current_price - low_52w) / low_52w) * 100
-                price_above_low_threshold = distance_from_low >= self.MIN_PCT_ABOVE_LOW
-            else:
-                if debug_mode: print(f"    [Filtro 3] Rango 52w: ❌ No se pudo calcular")
-                return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w", filter_name="Rango 52w")
-
-            if debug_mode: print(f"    [Filtro 3.1] >30% sobre Mínimo 52w: {'✅' if price_above_low_threshold else '❌'} (Valor: {distance_from_low:.1f}%)")
-            if not price_above_low_threshold:
-                # --- EXCEPCIÓN PARA LÍDERES DE BAJA VOLATILIDAD ---
-                # Si la acción está muy cerca de su máximo (ej. <5%) y tiene un RS muy alto (ej. >85),
-                # se le permite pasar aunque no esté un 30% sobre el mínimo.
-                # Esto captura a los líderes que han subido de forma constante sin grandes correcciones.
-                is_strong_leader_candidate = high_52w and ((high_52w - current_price) / high_52w) * 100 < self.STRONG_LEADER_MAX_PCT_BELOW_HIGH
-                is_high_rs = rs_rating is not None and rs_rating > self.STRONG_LEADER_MIN_RS
-                if debug_mode: print(f"      - Excepción Líder Fuerte: {'✅' if (is_strong_leader_candidate and is_high_rs) else '❌'} (Cerca Máx: {is_strong_leader_candidate}, RS Alto: {is_high_rs})")
-                if not (is_strong_leader_candidate and is_high_rs):
-                    return reject_and_return('Stage 2 (Developing)', "Precio no está 30%+ sobre mínimo 52w", filter_name="Posición Mínimo 52w")
-            
-            if high_52w:
-                distance_from_high = ((high_52w - current_price) / high_52w) * 100
-                price_near_high = distance_from_high <= self.MAX_PCT_BELOW_HIGH
-            else:
-                # Esto ya se manejó arriba, pero por si acaso
-                return reject_and_return('Stage 2 (Developing)', "No se pudo calcular rango 52w", filter_name="Rango 52w")
-            if debug_mode: print(f"    [Filtro 3.2] <25% desde Máximo 52w: {'✅' if price_near_high else '❌'} (Valor: {distance_from_high:.1f}%)")
-            if not price_near_high:
-                return reject_and_return('Stage 2 (Developing)', "Precio no está dentro del 25% del máximo 52w", filter_name="Posición Máximo 52w")
-
-            # FILTRO 4: FUERZA RELATIVA
-            rs_strong = rs_rating is not None and rs_rating >= self.MIN_RS_RATING
-            if debug_mode: print(f"    [Filtro 4] RS Rating >= 70: {'✅' if rs_strong else '❌'} (Valor: {rs_rating})")
-            if not rs_strong:
-                return reject_and_return('Stage 2 (Developing)', "RS Rating insuficiente (<70)", filter_name="RS Rating")
-
-            # FILTRO DE PRECIO EXTENDIDO (ELIMINADO)
-            # Se ha eliminado el rechazo directo por precio extendido.
-            # La lógica ahora está en el sistema de scoring (penaliza) y en el 'entry_signal' (informa).
-            # Esto evita descartar acciones fuertes que están en pleno breakout.
-            if debug_mode:
-                if result['is_extended']:
-                    print(f"    [Filtro Extendido] Estado: ⚠️ Extendido (No se rechaza, pero se penalizará en el score)")
-                else:
-                    print(f"    [Filtro Extendido] Estado: ✅ No Extendido")
-
-            # FILTRO 5: PATRONES DE PRECIO/VOLUMEN (más caros de calcular)
-            # Actualizamos el resultado con el análisis VCP ahora que sabemos que no fue rechazado antes
-            result['vcp_analysis'] = vcp_analysis
-            result['vcp_detected'] = vcp_analysis['vcp_detected']
-
-            vcp_detected = result['vcp_detected']
-            institutional_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
-            result['institutional_accumulation'] = institutional_accumulation
-            
-            pattern_score, pattern_details = self.get_pattern_score(vcp_analysis, institutional_accumulation)
-            if debug_mode: print(f"    [Filtro 5] Patrón Precio/Volumen (Score >= 5): {'✅' if pattern_score >= self.MIN_PATTERN_SCORE else '❌'} (Score: {pattern_score}, Detalles: {', '.join(pattern_details)})")
-            if pattern_score < self.MIN_PATTERN_SCORE:
-                return reject_and_return('Stage 2 (Developing)', f"Patrón de precio/volumen insuficiente (Score: {pattern_score})", filter_name="Patrón Precio/Volumen")
-            
-            if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
+            passed, reason, pattern_score, institutional_accumulation = self._check_price_volume_pattern(df, vcp_analysis, volume_50d_avg)
+            if not passed: return self._build_rejection_result(result, 'Stage 2 (Developing)', reason, False, debug_mode, "Patrón Precio/Volumen")
 
             # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
+            if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
             passes_technical = True
             stage_analysis = "Stage 2 (Uptrend)"
-            result['passes_minervini_technical'] = True
-            result['stage_analysis'] = stage_analysis
+            result.update({
+                'passes_minervini_technical': True, 'stage_analysis': stage_analysis,
+                'is_actionable_entry': is_actionable, 'vcp_detected': vcp_analysis['vcp_detected'],
+                'institutional_accumulation': institutional_accumulation, 'pattern_score': pattern_score,
+                'vcp_analysis': vcp_analysis
+            })
 
-            result['is_actionable_entry'] = is_actionable
+            # FILTROS FUNDAMENTALES
+            passed, reason, earnings_acceleration, roe_strong = self._check_fundamental_health(ticker_info)
+            if passed is None: # Caso especial para beneficios negativos, descartar por completo
+                return None
+            if not passed:
+                return self._build_rejection_result(result, stage_analysis, reason, passes_technical, debug_mode, "Salud Fundamental")
 
-            # FILTRO FUNDAMENTAL CERO: BENEFICIOS POSITIVOS (NO NEGOCIABLE)
-            # Descartar totalmente si no hay beneficios, como solicitado por el usuario.
-            if ticker_info:
-                net_income = ticker_info.get('netIncomeToCommon')
-                # Si net_income es None, no podemos estar seguros, así que lo dejamos pasar.
-                # Si es 0 o negativo, lo descartamos.
-                if net_income is not None and net_income <= 0:
-                    reason = f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)"
-                    if debug_mode: print(f"    [Filtro Fund. 0] Beneficios > 0: ❌ {reason}")
-                    # Devolver None indica a la función que lo llama que descarte esta acción por completo.
-                    return None
+            passes_institutional, institutional_score, institutional_details = self.hybrid_institutional_evidence(symbol, df, ticker_info, volume_50d_avg)
+            if not passes_institutional:
+                return self._build_rejection_result(result, stage_analysis, "Evidencia institucional insuficiente", passes_technical, debug_mode, "Evidencia Institucional")
 
-            # --- EMBUDO DE FILTRADO FUNDAMENTAL (EARLY EXIT) ---
-
-            # FILTRO 6: EARNINGS
-            strong_earnings = False
-            earnings_acceleration = False
-            if ticker_info:
-                try:
-                    quarterly_earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
-                    if quarterly_earnings_growth is not None:
-                        strong_earnings = quarterly_earnings_growth >= self.MIN_EARNINGS_GROWTH
-                        earnings_acceleration = quarterly_earnings_growth > 0.3  # >30% como proxy de aceleración
-                    # Si 'earningsQuarterlyGrowth' es None, strong_earnings se mantendrá en False,
-                    # lo que hará que la acción falle el filtro de crecimiento, como debe ser.
-                except:
-                    strong_earnings = False
-            if debug_mode: print(f"    [Filtro 6] Crecimiento Beneficios >= 25%: {'✅' if strong_earnings else '❌'} (Valor: {ticker_info.get('earningsQuarterlyGrowth')})")
-            if not strong_earnings:
-                reason = "Earnings growth <25.0% YoY o dato no disponible"
-                return reject_and_return(stage_analysis, reason, passes_technical=True, filter_name="Crecimiento Beneficios")
-
-            # FILTRO 7: GROWTH (REVENUE + ROE)
-            strong_growth = False
-            roe_strong = False
-            if ticker_info:
-                quarterly_earnings_growth = ticker_info.get('earningsQuarterlyGrowth') # Necesario para la nueva lógica
-                try: # Usamos un try-except más específico para evitar ocultar errores.
-                    revenue_growth = ticker_info.get('revenueGrowth')
-                    roe = ticker_info.get('returnOnEquity')
-
-                    # --- LÓGICA DE FILTRO DE CRECIMIENTO INTELIGENTE (REFACTORIZADA) ---
-                    # Un candidato debe tener datos de ROE y cumplir el mínimo.
-                    # Esta es una condición común para ambos caminos de crecimiento.
-                    has_strong_roe = roe is not None and roe >= self.MIN_ROE
-                    roe_strong = has_strong_roe  # Guardamos para el scoring
-
-                    if not has_strong_roe:
-                        strong_growth = False
-                    else:
-                        # Ahora evaluamos los dos caminos posibles, sabiendo que el ROE es bueno.
-                        # Camino 1: Líder de Crecimiento Clásico (altos ingresos)
-                        has_classic_growth = revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH
-                        
-                        # Camino 2: Central de Productividad (beneficios excepcionales con ingresos decentes)
-                        is_profit_powerhouse = (
-                            quarterly_earnings_growth is not None and 
-                            quarterly_earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and
-                            revenue_growth is not None and
-                            revenue_growth >= self.DECENT_REVENUE_GROWTH
-                        )
-
-                        strong_growth = has_classic_growth or is_profit_powerhouse
-                except Exception as e:
-                    print(f"    - {symbol} Error en filtro de crecimiento: {e}")
-                    strong_growth = False
-            if debug_mode: print(f"    [Filtro 7] Crecimiento/Rentabilidad (ROE/Revenue): {'✅' if strong_growth else '❌'} (ROE: {ticker_info.get('returnOnEquity', 0):.2f}, Revenue Growth: {ticker_info.get('revenueGrowth', 0):.2f})")
-            if not strong_growth:
-                return reject_and_return(stage_analysis, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", passes_technical=True, filter_name="Crecimiento/Rentabilidad")
-
-            # FILTRO 8: EVIDENCIA INSTITUCIONAL
-            institutional_evidence = False
-            institutional_score = 0
-            institutional_details = []
-            if volume_50d_avg:
-                passes_institutional, institutional_score, institutional_details = self.hybrid_institutional_evidence(
-                    symbol, df, ticker_info, volume_50d_avg
-                )
-                institutional_evidence = passes_institutional
-            if debug_mode: print(f"    [Filtro 8] Evidencia Institucional (Score >= 5): {'✅' if institutional_evidence else '❌'} (Score: {institutional_score}/8)")
-            if not institutional_evidence:
-                reason = "Evidencia institucional insuficiente"
-                return reject_and_return(stage_analysis, reason, passes_technical=True, filter_name="Evidencia Institucional")
-            
             if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS FUNDAMENTALES --- \n")
-            
+
             # --- ¡ÉXITO! LA ACCIÓN PASA TODOS LOS FILTROS ---
-            passes_fundamental = True
-            passes_all_filters = passes_technical and passes_fundamental
+            passes_all_filters = True
             result['passes_minervini_fundamental'] = True
 
             analysis_for_scoring = {
-                'stage_analysis': stage_analysis,
-                'rs_rating': rs_rating,
-                'distance_to_52w_high': distance_from_high,
-                'distance_from_52w_low': distance_from_low,
-                'pattern_score': pattern_score, # Usamos el nuevo score
-                'vcp_detected': vcp_detected, # Mantenemos para info
-                'institutional_evidence': institutional_evidence,
-                'institutional_score': institutional_score,
-                'earnings_acceleration': earnings_acceleration,
-                'roe_strong': roe_strong,
-                'is_extended': is_extended,  # Para penalizar en el score
-                'is_actionable_entry': is_actionable  # Para bonificar en el score
+                'stage_analysis': stage_analysis, 'rs_rating': rs_rating,
+                'distance_to_52w_high': distance_from_high, 'distance_from_52w_low': distance_from_low,
+                'pattern_score': pattern_score, 'vcp_detected': result['vcp_detected'],
+                'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
+                'earnings_acceleration': earnings_acceleration, 'roe_strong': roe_strong,
+                'is_extended': is_extended, 'is_actionable_entry': is_actionable
             }
             minervini_score = self.calculate_minervini_score(analysis_for_scoring)
 
             # Actualizar el diccionario de resultados con todos los datos de la acción exitosa
             result.update({
-                'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None, 'ma_150': round(ma_150, 2) if pd.notna(ma_150) else None,
-                'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None, 'high_52w': round(high_52w, 2) if high_52w else None,
-                'low_52w': round(low_52w, 2) if low_52w else None, 'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
-                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None, 'pattern_score': pattern_score, 'vcp_detected': vcp_detected,
+                'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
+                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None,
                 'entry_signal': entry_signal, 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
-                'vcp_analysis': vcp_analysis, 'institutional_accumulation': basic_accumulation, 'institutional_evidence': institutional_evidence, 
-                'institutional_score': institutional_score, 'institutional_details': institutional_details,
-                'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None, 'earnings_acceleration': earnings_acceleration,
-                'roe_strong': roe_strong, 'passes_all_filters': passes_all_filters, 'minervini_score': minervini_score,
-                'filter_reasons': ["✅ PASA TODOS LOS FILTROS MINERVINI"]
+                'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
+                'institutional_details': institutional_details, 'earnings_acceleration': earnings_acceleration,
+                'roe_strong': roe_strong, 'passes_all_filters': passes_all_filters,
+                'minervini_score': minervini_score, 'filter_reasons': ["✅ PASA TODOS LOS FILTROS MINERVINI"],
             })
             return result
             
         except Exception as e:
-            print(f"Error en análisis Minervini: {e}")
-            result['stage_analysis'] = 'Error en cálculo'
+            print(f"Error en análisis Minervini para {symbol}: {e}")
+            result['vcp_analysis'] = vcp_analysis
             result['filter_reasons'] = ['Error de cálculo']
             return result
 
@@ -802,7 +744,7 @@ class MinerviniStockScreener:
                             continue # Saltar al siguiente símbolo
 
                         company_info = {
-                            'name': ticker_info.get('longName', 'N/A'),
+                            'name': ticker_info.get('longName', symbol),
                             'sector': ticker_info.get('sector', 'N/A'),
                             'industry': ticker_info.get('industry', 'N/A'),
                             'market_cap': ticker_info.get('marketCap', 'N/A')
@@ -906,12 +848,10 @@ class MinerviniStockScreener:
         batch_size = 75 # Reducido para mayor fiabilidad
         total_batches = (len(symbols) + batch_size - 1) // batch_size
         
-        for i in range(total_batches):
+        for i in tqdm(range(total_batches), desc="Descargando datos históricos", unit="lote"):
             start_idx = i * batch_size
             end_idx = min(start_idx + batch_size, len(symbols))
             batch_symbols = symbols[start_idx:end_idx]
-            
-            print(f"  Descargando lote {i+1}/{total_batches} ({len(batch_symbols)} símbolos)...")
             
             max_retries = 3
             retry_count = 0
@@ -927,21 +867,18 @@ class MinerviniStockScreener:
                             df = batch_data[symbol].dropna()
                             if not df.empty:
                                 all_data[symbol] = df
-                    
-                    print(f"  ✓ Lote {i+1} descargado con éxito.")
                     success = True
                     
                 except Exception as e:
                     retry_count += 1
-                    wait_time = 2 ** retry_count
+                    # Backoff más conservador para la descarga masiva: 10s, 20s, 40s
+                    wait_time = 10 * (2 ** (retry_count - 1))
                     print(f"  ⚠️ Error en lote {i+1}: {e}. Reintentando en {wait_time}s... ({retry_count}/{max_retries})")
                     time.sleep(wait_time)
             
             if not success:
                 print(f"  ❌ Lote {i+1} falló después de {max_retries} reintentos. Omitiendo este lote.")
             
-            time.sleep(1) # Pausa de 1s entre lotes para no saturar la API
-        
         print(f"\n✓ Descarga masiva completada. Total de datos obtenidos para {len(all_data)} símbolos.")
         return all_data
     
@@ -1088,7 +1025,7 @@ def fetch_info_for_symbol(symbol, cache_manager, max_retries=3):
     # 2. Si no hay caché fresco, intentar llamada a la API con reintentos
     for attempt in range(max_retries):
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = yf.Ticker(symbol, timeout=10) # Timeout de 10s
             ticker_info = ticker.info
             
             if ticker_info and 'symbol' in ticker_info:
@@ -1109,8 +1046,8 @@ def fetch_info_for_symbol(symbol, cache_manager, max_retries=3):
 
             # Reintentar SOLO si es un error de rate limit y aún quedan intentos.
             if is_rate_limit_error and attempt < max_retries - 1:
-                wait_time = 30
-                print(f"  - ⏳ Rate limit detectado para {symbol}. Pausa de {wait_time}s...")
+                wait_time = 5 * (2 ** attempt) # Exponential backoff: 5s, 10s
+                print(f"  - ⏳ Rate limit detectado para {symbol}. Pausa de {wait_time}s... (Intento {attempt + 1}/{max_retries})")
                 time.sleep(wait_time)
             else:
                 # Si es otro tipo de error (ej. datos no existen) o se agotaron los reintentos,
@@ -1169,11 +1106,10 @@ def main():
     all_stock_data = {}
     all_failed = []
     
-    for batch_num in range(total_batches):
+    for batch_num in tqdm(range(total_batches), desc="Analizando lotes Minervini", unit="lote"):
         start_idx = batch_num * batch_size
         end_idx = min(start_idx + batch_size, len(symbols_to_process))
-        batch_symbols = symbols_to_process[start_idx:end_idx]        
-        print(f"\n=== LOTE {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx}) ===")
+        batch_symbols = symbols_to_process[start_idx:end_idx]
         
         # La función ahora recibe los datos históricos y solo descarga .info si es necesario
         batch_data, batch_failed, batch_retries = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager)
