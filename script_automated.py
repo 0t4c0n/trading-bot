@@ -21,12 +21,21 @@ class MinerviniStockScreener:
         self.MIN_ROE = 0.17             # Retorno sobre el patrimonio (ROE) >= 17%
         # --- CONSTANTES PARA EXCEPCIÓN DE LÍDERES DE MERCADO ---
         # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
-        self.MIN_PATTERN_SCORE = 5 # Puntuación mínima requerida en el análisis de patrones (VCP/Acumulación)
+        # Se reduce a 4 para permitir que acciones con solo "Acumulación Institucional" (4 pts) pasen,
+        # haciendo el filtro un poco menos restrictivo pero aún selectivo.
+        self.MIN_PATTERN_SCORE = 4 # Puntuación mínima requerida en el análisis de patrones (VCP/Acumulación)
         self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
         self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
         # --- CONSTANTES PARA FILTRO DE CRECIMIENTO INTELIGENTE ---
         self.EXCEPTIONAL_EARNINGS_GROWTH = 0.40 # Umbral para "centrales de productividad"
         self.DECENT_REVENUE_GROWTH = 0.10       # Requisito de ingresos más bajo para esas centrales
+        # --- CONSTANTES PARA ANÁLISIS DE PATRONES (VCP) ---
+        self.VCP_MAX_PCT_FROM_HIGH = 0.15       # % máximo desde el máximo de 52s para ser considerado en contexto
+        self.VCP_VOLATILITY_TIGHTENING_RATIO = 0.6 # La volatilidad de 10d debe ser <60% de la de 50d
+        self.VCP_VOLUME_DRY_UP_DAYS = 10        # Días para analizar la sequía de volumen
+        self.VCP_VOLUME_DRY_UP_MIN_DAYS = 5     # Mínimo de días con volumen bajo
+        self.VCP_PIVOT_RANGE_DAYS = 5           # Días para analizar el rango de pivote
+        self.VCP_PIVOT_MAX_PRICE_RANGE = 0.025  # Rango de precio máximo (<2.5%) para un pivote
 
     def get_nyse_nasdaq_symbols(self):
         """Obtiene símbolos de NYSE y NASDAQ combinados"""
@@ -148,28 +157,28 @@ class MinerviniStockScreener:
             current_price = df['Close'].iloc[-1]
             
             # 1. CONTEXTO: Cerca del máximo de 52 semanas
-            price_near_high = (high_52w - current_price) / high_52w <= 0.15  # Dentro del 15% del máximo
+            price_near_high = (high_52w - current_price) / high_52w <= self.VCP_MAX_PCT_FROM_HIGH
             if not price_near_high:
                 return {'vcp_detected': False, 'is_in_pivot': False, 'details': ['No está cerca del máximo 52w']}
             
             # 2. CONTRACCIÓN DE VOLATILIDAD (VCP - Ingrediente #1): El resorte se comprime.
             # Volatilidad en los últimos 10 días vs los últimos 50 días
-            vol_10d = (df['High'].tail(10).max() - df['Low'].tail(10).min()) / df['Close'].tail(10).mean()
+            vol_10d = (df['High'].tail(self.VCP_VOLUME_DRY_UP_DAYS).max() - df['Low'].tail(self.VCP_VOLUME_DRY_UP_DAYS).min()) / df['Close'].tail(self.VCP_VOLUME_DRY_UP_DAYS).mean()
             vol_50d = (df['High'].tail(50).max() - df['Low'].tail(50).min()) / df['Close'].tail(50).mean()
             
-            volatility_tightening = vol_10d < (vol_50d * 0.6) # La volatilidad reciente es <60% de la anterior
+            volatility_tightening = vol_10d < (vol_50d * self.VCP_VOLATILITY_TIGHTENING_RATIO)
 
             # 3. SEQUÍA DE VOLUMEN (LÓGICA MEJORADA): Los vendedores se agotan.
             # En lugar de una media, contamos el número de días con volumen por debajo del promedio.
             # Esto es más robusto contra picos de volumen aislados.
-            low_volume_days = df['Volume'].tail(10) < volume_50d_avg
-            # Requerimos que al menos 5 de los últimos 10 días tengan volumen bajo.
-            volume_dry_up = low_volume_days.sum() >= 5
+            low_volume_days = df['Volume'].tail(self.VCP_VOLUME_DRY_UP_DAYS) < volume_50d_avg
+            # Requerimos que al menos un número de días tengan volumen bajo.
+            volume_dry_up = low_volume_days.sum() >= self.VCP_VOLUME_DRY_UP_MIN_DAYS
             
             # 4. PUNTO PIVOTE (La calma antes de la explosión): Rango de precio ultra-estrecho.
             # El precio se mueve lateralmente en un rango muy ajustado en los últimos días.
-            price_range_5d = (df['High'].tail(5).max() - df['Low'].tail(5).min()) / current_price
-            is_in_tight_range = price_range_5d < 0.025 # Rango ajustado a <2.5% en los últimos 5 días
+            price_range_5d = (df['High'].tail(self.VCP_PIVOT_RANGE_DAYS).max() - df['Low'].tail(self.VCP_PIVOT_RANGE_DAYS).min()) / current_price
+            is_in_tight_range = price_range_5d < self.VCP_PIVOT_MAX_PRICE_RANGE
 
             # --- LÓGICA DE DECISIÓN ---
             # Se considera que hay un patrón VCP general si la volatilidad se contrae Y el volumen se seca.
@@ -322,25 +331,26 @@ class MinerviniStockScreener:
         """
         Sistema de puntuación integrado para VCP y acumulación.
         Reemplaza la lógica binaria 'OR' por un score más matizado.
+        Refactorizado para mayor claridad y mantenibilidad.
         """
         score = 0
         details = []
 
+        # 1. Puntuación por Acumulación Institucional (señal de fondo)
+        if institutional_accumulation:
+            score += 4
+            details.append("Institutional Accumulation (+4)")
+
+        # 2. Puntuación por Patrón de Contracción de Volatilidad (VCP)
+        # Estas condiciones son mutuamente excluyentes y representan la calidad del setup.
         # La señal de mayor calidad es un punto pivote accionable.
         if vcp_analysis.get('is_in_pivot', False):
-            score += 8  # Puntuación muy alta
+            score += 8  # Puntuación máxima por setup de entrada ideal
             details.append("Pivot Point (+8)")
         # Si no está en pivote, pero hay un VCP general, también es muy bueno.
         elif vcp_analysis.get('vcp_detected', False):
-            score += 5
+            score += 5  # Puntuación estándar por contracción de volatilidad
             details.append("VCP Detected (+5)")
-        
-        # La acumulación institucional siempre es una buena señal.
-        if institutional_accumulation:
-            # Si ya hay un VCP, la acumulación es una confirmación extra.
-            # Si no hay VCP, es la señal principal.
-            score += 4
-            details.append("Institutional Accumulation (+4)")
 
         return score, details
 
@@ -763,6 +773,7 @@ class MinerviniStockScreener:
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
         stock_data = {}
         failed_symbols = []
+        info_retry_count = 0 # NUEVO: Contador de reintentos de .info
         
         for i, symbol in enumerate(symbols, 1):
             max_retries = 3
@@ -776,53 +787,33 @@ class MinerviniStockScreener:
                     if hist is None or hist.empty:
                         raise ValueError("Datos históricos no encontrados en el diccionario pre-cargado.")
                     
-                    if not hist.empty and len(hist) >= 250:  # Mínimo para análisis Minervini
+                    if len(hist) >= 250:  # Mínimo para análisis Minervini
                         hist_with_ma = self.calculate_moving_averages(hist)
                         
-                        try:
-                            # La llamada de red para .info ahora usa el gestor de caché
-                            ticker_info = fetch_info_for_symbol(symbol, cache_manager)
-                            company_info = {
-                                'name': ticker_info.get('longName', 'N/A'),
-                                'sector': ticker_info.get('sector', 'N/A'),
-                                'industry': ticker_info.get('industry', 'N/A'),
-                                'market_cap': ticker_info.get('marketCap', 'N/A')
-                            }
-                        except Exception as info_error:
-                            error_str = str(info_error).lower()
-                            # Estrategia de reintento diferenciada
-                            if "401" in error_str: # Error de autorización persistente
-                                wait_time = 60 # Pausa larga para "enfriar" la conexión
-                                print(f"⏳ {symbol} - Error 401 (Unauthorized). Pausa larga de {wait_time}s. Reintentando...")
-                                time.sleep(wait_time)
-                                retry_count += 1
-                                continue
-                            elif "rate" in error_str or "429" in error_str: # Rate limit normal
-                                time.sleep(2 ** retry_count)
-                                retry_count += 1
-                                continue
-                            else:
-                                # CAMBIO CLAVE: Descartar si .info falla por otra razón
-                                print(f"✗ {symbol} - Descartado: No se pudo obtener .info (fundamentales). Error: {info_error}")
-                                failed_symbols.append(symbol)
-                                success = True # Marcar como "manejado" para salir del bucle de reintentos
-                                continue # Saltar al siguiente símbolo en el lote
+                        # La llamada de red para .info ahora usa el gestor de caché con reintentos integrados.
+                        ticker_info, had_to_retry = fetch_info_for_symbol(symbol, cache_manager)
+                        if had_to_retry:
+                            info_retry_count += 1
 
-                        # Verificación adicional: a veces .info devuelve un dict vacío sin error
+                        # Verificación: si después de reintentos y fallback, .info sigue vacío, descartar.
                         if not ticker_info or 'sector' not in ticker_info:
-                            print(f"✗ {symbol} - Descartado: .info devuelto vacío o incompleto.")
+                            # El log de error ya se imprime dentro de fetch_info_for_symbol si es un fallo total
                             failed_symbols.append(symbol)
-                            success = True # BUG FIX: Marcar como manejado para salir del bucle de reintentos
                             continue # Saltar al siguiente símbolo
-                        
+
+                        company_info = {
+                            'name': ticker_info.get('longName', 'N/A'),
+                            'sector': ticker_info.get('sector', 'N/A'),
+                            'industry': ticker_info.get('industry', 'N/A'),
+                            'market_cap': ticker_info.get('marketCap', 'N/A')
+                        }
+
                         stock_rs_rating = rs_ratings.get(symbol)
                         minervini_analysis = self.get_minervini_analysis(hist_with_ma, stock_rs_rating, ticker_info, symbol)
                         
                         # Si el análisis devuelve None, es porque la acción fue descartada (ej. beneficios negativos)
                         if minervini_analysis is None:
                             success = True # Marcamos como éxito para no reintentar
-                            # Al poner success=True, el bucle while terminará y pasará al siguiente símbolo.
-                            # No se añadirá a stock_data.
                             continue
 
                         stock_data[symbol] = {
@@ -846,7 +837,7 @@ class MinerviniStockScreener:
                         success = True
                         
                     else:
-                        failed_symbols.append(symbol)
+                        # No se añade a failed_symbols porque es un descarte esperado, no un error.
                         print(f"✗ {symbol} - Datos insuficientes (<250 días)")
                         success = True
                     
@@ -871,7 +862,7 @@ class MinerviniStockScreener:
                 if success or retry_count >= max_retries:
                     time.sleep(0.5)  # Pausa aumentada para ser más amable con la API
                     
-        return stock_data, failed_symbols
+        return stock_data, failed_symbols, info_retry_count
 
     def calculate_all_rs_scores(self, all_data):
         """Paso 1 y 2 para RS Rating: Calcula el score de rendimiento para todas las acciones."""
@@ -1084,28 +1075,56 @@ class TickerInfoCacheManager:
         else:
             print("\nℹ️ No hubo actualizaciones en el caché de .info, no se guarda nada.")
 
-def fetch_info_for_symbol(symbol, cache_manager):
+def fetch_info_for_symbol(symbol, cache_manager, max_retries=3):
     """
-    Obtiene .info de yfinance, usando el TickerInfoCacheManager.
+    Obtiene .info de yfinance de forma robusta, con reintentos y fallback a caché.
+    Devuelve (info, tuvo_reintentos).
     """
+    # 1. Intentar obtener datos frescos del caché (TTL de varias horas)
     cached_info = cache_manager.get(symbol)
     if cached_info:
-        return cached_info
+        return cached_info, False # No hubo reintentos
 
-    try:
-        ticker = yf.Ticker(symbol)
-        ticker_info = ticker.info
-        if ticker_info and 'symbol' in ticker_info:
-            cache_manager.set(symbol, ticker_info)
-            return ticker_info
-        else:
-            raise ValueError("API returned empty or invalid info.")
-    except Exception as e:
-        print(f"  - ⚠️ API falló para {symbol} ({e}). Usando caché obsoleto como fallback si existe.")
-        stale_info = cache_manager.get_stale(symbol)
-        if stale_info:
-            return stale_info
-        return {}
+    # 2. Si no hay caché fresco, intentar llamada a la API con reintentos
+    for attempt in range(max_retries):
+        try:
+            ticker = yf.Ticker(symbol)
+            ticker_info = ticker.info
+            
+            if ticker_info and 'symbol' in ticker_info:
+                cache_manager.set(symbol, ticker_info)
+                # Si tuvo éxito pero no en el primer intento, fue un reintento exitoso.
+                return ticker_info, attempt > 0
+            else:
+                raise ValueError("API devolvió .info vacío o inválido.")
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_rate_limit_error = (
+                "rate" in error_msg or 
+                "429" in error_msg or 
+                "too many requests" in error_msg or
+                "401" in error_msg # yfinance a veces usa 401 para bloqueos temporales
+            )
+
+            # Reintentar SOLO si es un error de rate limit y aún quedan intentos.
+            if is_rate_limit_error and attempt < max_retries - 1:
+                wait_time = 30
+                print(f"  - ⏳ Rate limit detectado para {symbol}. Pausa de {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                # Si es otro tipo de error (ej. datos no existen) o se agotaron los reintentos,
+                # no tiene sentido seguir. Salimos del bucle de reintentos inmediatamente.
+                break
+
+    # 3. Después de todos los reintentos, usar caché obsoleto como último recurso
+    stale_info = cache_manager.get_stale(symbol)
+    if not stale_info:
+        # Solo loguear si ni siquiera hay caché obsoleto, es un fallo total.
+        # Este es un evento raro y digno de ser logueado.
+        print(f"  - ❌ API falló para {symbol} tras {max_retries} intentos y sin caché de fallback.")
+    
+    return stale_info if stale_info else {}, True # Tuvo que reintentar (y falló)
 
 def main():
     """Función principal para GitHub Actions - Análisis Minervini SEPA completo"""
@@ -1157,7 +1176,7 @@ def main():
         print(f"\n=== LOTE {batch_num + 1}/{total_batches} ({start_idx + 1}-{end_idx}) ===")
         
         # La función ahora recibe los datos históricos y solo descarga .info si es necesario
-        batch_data, batch_failed = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager)
+        batch_data, batch_failed, batch_retries = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager)
         
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
@@ -1165,7 +1184,20 @@ def main():
         batch_passed = sum(1 for data in batch_data.values() if data['minervini_analysis']['passes_all_filters'])
         batch_filtered = len(batch_data) - batch_passed
         avg_score = np.mean([data['minervini_analysis']['minervini_score'] for data in batch_data.values()]) if batch_data else 0
-        print(f"Lote completado: {batch_passed} Stage 2 | {batch_filtered} Filtradas | {len(batch_failed)} Errores | Score Promedio: {avg_score:.1f}")
+        
+        # NUEVO: Construir la cadena de resumen del lote
+        summary_str = f"Lote completado: {batch_passed} Stage 2 | {batch_filtered} Filtradas | Score Promedio: {avg_score:.1f}"
+        
+        problems = []
+        if len(batch_failed) > 0:
+            problems.append(f"{len(batch_failed)} Errores")
+        if batch_retries > 0:
+            problems.append(f"{batch_retries} Reintentos API")
+        
+        if problems:
+            summary_str += f" | ({', '.join(problems)})"
+            
+        print(summary_str)
         
         if batch_num < total_batches - 1:
             print("Pausa 30s...")

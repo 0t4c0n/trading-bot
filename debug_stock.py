@@ -8,7 +8,7 @@ from script_automated import MinerviniStockScreener
 
 # --- CONFIGURACIÓN ---
 # ▼▼▼ ¡AQUÍ ES DONDE PONES LA ACCIÓN QUE QUIERES DEBUGEAR! ▼▼▼
-TICKER_TO_DEBUG = "RSI"  # Cambia "NVDA" por el símbolo que quieras analizar
+TICKER_TO_DEBUG = "ASA"  # Cambia "NVDA" por el símbolo que quieras analizar
 # --- FIN DE LA CONFIGURACIÓN ---
 
 def calculate_real_rs_rating(stock_df, benchmark_df):
@@ -44,9 +44,11 @@ def debug_single_stock(symbol):
     print(f"1. Descargando datos históricos ('2y') para {symbol} y benchmark (SPY)...")
     try:
         # Descargar ambos tickers a la vez es más eficiente
+        # yfinance devuelve un DataFrame con columnas de varios niveles: (Métrica, Ticker)
+        # ej., ('Close', 'ASA'), ('Open', 'ASA'), ('Close', 'SPY')
         data = yf.download([symbol, 'SPY'], period="2y", auto_adjust=True, progress=False)
-        hist_df = data.loc[:, (slice(None), symbol)].droplevel(1, axis=1)
-        spy_df = data.loc[:, (slice(None), 'SPY')].droplevel(1, axis=1)
+        hist_df = data.xs(symbol, level=1, axis=1)
+        spy_df = data.xs('SPY', level=1, axis=1)
         
         if hist_df.empty or len(hist_df) < 252 or spy_df.empty:
             print(f"❌ Error: No se pudieron descargar suficientes datos para {symbol}. Se necesitan al menos 252 días.")

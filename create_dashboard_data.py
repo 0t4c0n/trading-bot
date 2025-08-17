@@ -133,9 +133,12 @@ def create_minervini_dashboard_data():
         if not all_df.empty and 'Minervini_Score' in all_df.columns:
             print("Procesando ranking por Minervini Score...")
             
-            # CORRECCIÓN: Ordenar primero por las que pasan todos los filtros, y luego por score.
+            # CORRECCIÓN MEJORADA: Ordenar por 3 niveles:
+            # 1. Las que pasan todos los filtros.
+            # 2. El Minervini Score.
+            # 3. El RS Rating como desempate final.
             # Esto asegura que los candidatos "perfectos" (✅ All Filters) siempre aparezcan primero.
-            all_sorted = all_df.sort_values(by=['Passes_All_Filters', 'Minervini_Score'], ascending=[False, False])
+            all_sorted = all_df.sort_values(by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'], ascending=[False, False, False])
             
             # Top 15 para dashboard (mostraremos top 10, pero calculamos más por si hay empates)
             top_stocks = all_sorted.head(10)

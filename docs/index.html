@@ -269,6 +269,12 @@
             border: 1px solid #86efac;
             font-weight: 700;
         }
+
+        .indicator-badge.accumulation-badge {
+            background-color: #e0f2fe; /* Azul claro */
+            color: #0c4a6e; /* Azul oscuro */
+            border-color: #7dd3fc;
+        }
         
         .entry-signal {
             margin-top: 12px;
@@ -605,8 +611,15 @@
                     const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
                     const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
                     
+                    // Lógica de indicadores mejorada para distinguir VCP de solo acumulación
                     let indicatorsHtml = '';
-                    if (stock.technical_indicators.vcp_detected) indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
+                    if (stock.technical_indicators.vcp_detected) {
+                        indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
+                    } else if (stock.technical_indicators.institutional_accumulation) {
+                        indicatorsHtml += '<span class="indicator-badge accumulation-badge">🏦 Accumulation</span>';
+                    }
+
+                    // Otros indicadores independientes
                     if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
                     if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
                     if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
