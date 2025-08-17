@@ -292,6 +292,13 @@
             border-color: #86efac;
         }
 
+        .entry-signal.vcp-setup {
+            background-color: #fef9c3; /* Amarillo claro */
+            color: #854d0e; /* Amarillo oscuro */
+            border-color: #fde047;
+            font-weight: 600;
+        }
+
         .entry-signal.ma-bounce-50,
         .entry-signal.ma-bounce-21 {
             background-color: #e0f2fe; /* Azul claro */
@@ -624,6 +631,22 @@
                     if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
                     if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
                     
+                    const entrySignal = stock.entry_point.signal;
+                    const vcpDetected = stock.technical_indicators.vcp_detected;
+                    let entrySignalText = entrySignal;
+                    let entrySignalClass = entrySignal.toLowerCase().replace(/ /g, '-');
+
+                    // Lógica para clarificar la señal de entrada y hacerla más descriptiva
+                    if (entrySignal === 'VCP Setup' || (entrySignal === 'Consolidando' && vcpDetected)) {
+                        // Unifica ambos casos (el correcto y el confuso) en una sola señal clara
+                        entrySignalText = 'VCP en Formación';
+                        entrySignalClass = 'vcp-setup';
+                    } else if (entrySignal === 'Pivot Point') {
+                        entrySignalText = 'Punto Pivote (¡Listo!)';
+                    } else if (entrySignal.includes('MA-Bounce')) {
+                        entrySignalText = `Rebote en MA-${entrySignal.split('-')[2]}`;
+                    }
+
                     topPicksHtml += `
                         <div class="stock-card ${cardClass}">
                             ${perfectBadge}
@@ -631,8 +654,8 @@
                             <div class="stock-header">
                                 <div class="stock-info">
                                     <h3>${stock.symbol}</h3>
-                                    <div class="company">${stock.company}</div>
-                                    <div class="sector">${stock.sector}</div>
+                                    <div class="company">${stock.company || ''}</div>
+                                    <div class="sector">${stock.sector || ''}</div>
                                 </div>
                                 <div class="stock-price">
                                     <div class="price">$${stock.price.toFixed(2)}</div>
@@ -653,8 +676,8 @@
 
                             ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
                             
-                            <div class="entry-signal ${stock.entry_point.signal.toLowerCase().replace(/ /g, '-')}">
-                                🚦 Punto de Entrada: <strong>${stock.entry_point.signal}</strong>
+                            <div class="entry-signal ${entrySignalClass}">
+                                🚦 Punto de Entrada: <strong>${entrySignalText}</strong>
                             </div>
                         </div>
                     `;

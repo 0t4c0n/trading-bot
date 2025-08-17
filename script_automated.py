@@ -395,7 +395,14 @@ class MinerviniStockScreener:
 
             # 6. MULTIPLICADOR DE SEÑAL DE ENTRADA (El factor decisivo)
             entry_signal = analysis.get('entry_signal', 'Consolidando')
-            multipliers = {'Pivot Point': 1.15, 'MA-Bounce-50': 1.07, 'MA-Bounce-21': 1.05, 'Consolidando': 1.0, 'Extendido': 0.8}
+            multipliers = {
+                'Pivot Point': 1.15,  # Señal de máxima calidad
+                'VCP Setup': 1.10,    # Setup de alta calidad, casi listo
+                'MA-Bounce-50': 1.07, # Buen punto de entrada secundario
+                'MA-Bounce-21': 1.05, # Buen punto de entrada, más agresivo
+                'Consolidando': 1.0,  # Neutral, sin señal clara
+                'Extendido': 0.8      # Penalización por estar extendido
+            }
             final_score = base_score * multipliers.get(entry_signal, 1.0)
                 
             return min(round(final_score, 1), 100)
@@ -489,26 +496,33 @@ class MinerviniStockScreener:
 
         # Filtro 6: Crecimiento de beneficios
         earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
-        if earnings_growth is None or earnings_growth < self.MIN_EARNINGS_GROWTH:
-            return False, "Earnings growth <25.0% YoY o dato no disponible", False, False
+        if earnings_growth is None:
+            return False, "Dato de Earnings Growth no disponible", False, False
+        if earnings_growth < self.MIN_EARNINGS_GROWTH:
+            return False, f"Earnings growth < {self.MIN_EARNINGS_GROWTH:.0%} YoY", False, False
         
         earnings_acceleration = earnings_growth > 0.3
 
         # Filtro 7: Crecimiento de ingresos y ROE (Lógica Inteligente)
-        revenue_growth = ticker_info.get('revenueGrowth')
         roe = ticker_info.get('returnOnEquity')
+        if not (roe is not None and roe >= self.MIN_ROE):
+            return False, f"ROE < {self.MIN_ROE:.0%} o no disponible", earnings_acceleration, False
         
-        has_strong_roe = roe is not None and roe >= self.MIN_ROE
-        if not has_strong_roe:
-            return False, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", earnings_acceleration, False
+        has_strong_roe = True # Si llega aquí, el ROE es fuerte
 
-        has_classic_growth = revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH
-        is_profit_powerhouse = earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and revenue_growth is not None and revenue_growth >= self.DECENT_REVENUE_GROWTH
+        revenue_growth = ticker_info.get('revenueGrowth')
+
+        # Escenario 1: Crecimiento clásico (buenos ingresos)
+        if revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH:
+            return True, "", earnings_acceleration, has_strong_roe
+
+        # Escenario 2: "Central de productividad" (beneficios excepcionales compensan ingresos más bajos)
+        if earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and \
+           revenue_growth is not None and revenue_growth >= self.DECENT_REVENUE_GROWTH:
+            return True, "", earnings_acceleration, has_strong_roe
         
-        if not (has_classic_growth or is_profit_powerhouse):
-            return False, "Growth/Profitability insuficiente (ROE/Revenue/Earnings)", earnings_acceleration, True
-
-        return True, "", earnings_acceleration, True
+        # Si no cumple ninguno de los dos escenarios, falla.
+        return False, "Crecimiento de ingresos/beneficios insuficiente", earnings_acceleration, has_strong_roe
 
     def _check_ma_bounce(self, df, current_price, ma_period, uptrend_days, touch_days, touch_proximity, bounce_limit):
         """
@@ -548,7 +562,7 @@ class MinerviniStockScreener:
                     rs_rating=rs_rating,
                     debug_mode=debug_mode,
                     filter_name="Datos"
-            ), False
+                ), False
             
             # --- CÁLCULOS BÁSICOS INICIALES ---
             latest = df.iloc[-1]
@@ -611,13 +625,15 @@ class MinerviniStockScreener:
             # Calcular la señal de entrada solo para las acciones que pasan todos los filtros
             entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
 
+            # CORRECCIÓN CLAVE: Asegurarse de que 'entry_signal' se incluye para el cálculo del score.
             analysis_for_scoring = {
                 'stage_analysis': stage_analysis, 'rs_rating': rs_rating,
                 'distance_to_52w_high': distance_from_high, 'distance_from_52w_low': distance_from_low,
                 'pattern_score': pattern_score, 'vcp_detected': vcp_analysis['vcp_detected'],
                 'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
                 'earnings_acceleration': earnings_acceleration, 'roe_strong': roe_strong,
-                'is_extended': is_extended, 'is_actionable_entry': is_actionable
+                'is_extended': is_extended, 'is_actionable_entry': is_actionable,
+                'entry_signal': entry_signal
             }
             minervini_score = self.calculate_minervini_score(analysis_for_scoring)
 
@@ -668,6 +684,10 @@ class MinerviniStockScreener:
         # Prioridad 1: Pivote VCP (la señal de más bajo riesgo)
         if vcp_analysis.get('is_in_pivot', False):
             return "Pivot Point", True
+
+        # Prioridad 1.5: VCP general detectado (setup en formación)
+        if vcp_analysis.get('vcp_detected', False):
+            return "VCP Setup", True
 
         # Prioridad 2 y 3: Rebote en medias móviles (50 y 21 días)
         # Itera sobre los parámetros definidos en __init__ para mayor claridad y mantenibilidad.
