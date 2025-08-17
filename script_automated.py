@@ -47,8 +47,6 @@ class MinerviniStockScreener:
 
     def get_nyse_nasdaq_symbols(self):
         """Obtiene símbolos de NYSE y NASDAQ combinados"""
-        all_symbols = []
-        
         try:
             nyse_symbols = self.get_exchange_symbols('NYSE')
             nasdaq_symbols = self.get_exchange_symbols('NASDAQ')
@@ -358,54 +356,49 @@ class MinerviniStockScreener:
 
     
     def calculate_minervini_score(self, analysis):
-        """Calcula score Minervini (0-100) para ranking"""
+        """
+        Calcula un score Minervini (0-100) rediseñado para una mejor diferenciación y priorización de entradas.
+        Utiliza un sistema de multiplicadores para las señales de entrada.
+        """
         try:
-            score = 0
+            base_score = 0
             
-            # 1. Stage Analysis (0-40 points) - PESO PRINCIPAL
+            # 1. TENDENCIA Y ESTRUCTURA (Máx 35 puntos)
             stage = analysis.get('stage_analysis', '')
             if 'Stage 2' in stage:
-                score += 40
+                base_score += 35
             elif 'Stage 1' in stage or 'Stage 3' in stage:
-                score += 20
-            elif 'Stage 4' in stage:
-                score += 0
-            else:
-                score += 10  # Unknown/developing
+                base_score += 15
             
-            # 2. RS Rating (0-30 points) - SEGUNDO PESO
+            # 2. FUERZA RELATIVA (Máx 25 puntos)
             rs_rating = analysis.get('rs_rating', 0)
             if rs_rating:
-                score += min((rs_rating / 100) * 30, 30)
+                base_score += (rs_rating / 100) * 25
             
-            # 3. 52-Week Position (0-20 points)
-            dist_from_high = analysis.get('distance_to_52w_high', 100)
-            dist_from_low = analysis.get('distance_from_52w_low', 0)
-            
-            if dist_from_high is not None and dist_from_low is not None:
-                # Cerca del máximo (0-25% away) = más puntos
-                high_score = max(10 - (dist_from_high / 25) * 10, 0) if dist_from_high <= 25 else 0
-                # Lejos del mínimo (30%+ away) = más puntos  
-                low_score = min((dist_from_low - 30) / 70 * 10, 10) if dist_from_low >= 30 else 0
-                score += high_score + low_score
-            
-            # 4. Technical Patterns & Volume (0-10 points) - BONIFICACIONES
-            # Usamos el nuevo pattern_score para una bonificación más precisa
+            # 3. PATRÓN DE PRECIO (Máx 20 puntos) - Usa directamente el pattern_score
             pattern_score = analysis.get('pattern_score', 0)
-            score += min(pattern_score, 10) # Añade el score del patrón, con un máximo de 10 puntos
+            # El score máximo de patrón es 12 (Pivot+Acum). Lo escalamos a 20 puntos.
+            base_score += (pattern_score / 12) * 20
 
+            # 4. PROXIMIDAD AL MÁXIMO (Máx 10 puntos) - Recompensa estar muy cerca del máximo
+            dist_from_high = analysis.get('distance_to_52w_high', 100)
+            if dist_from_high is not None:
+                # Puntuación logarítmica inversa: más puntos cuanto más cerca de 0.
+                proximity_score = 10 * (1 - (dist_from_high / self.MAX_PCT_BELOW_HIGH))
+                base_score += max(0, proximity_score)
+
+            # 5. BONIFICACIÓN FUNDAMENTAL (Máx 10 puntos)
             if analysis.get('earnings_acceleration', False):
-                score += 2
+                base_score += 5
             if analysis.get('roe_strong', False):
-                score += 2
+                base_score += 5
+
+            # 6. MULTIPLICADOR DE SEÑAL DE ENTRADA (El factor decisivo)
+            entry_signal = analysis.get('entry_signal', 'Consolidando')
+            multipliers = {'Pivot Point': 1.15, 'MA-Bounce-50': 1.07, 'MA-Bounce-21': 1.05, 'Consolidando': 1.0, 'Extendido': 0.8}
+            final_score = base_score * multipliers.get(entry_signal, 1.0)
                 
-            # Penalizar si el precio está extendido, bonificar si está en un punto de entrada accionable
-            if analysis.get('is_extended', False):
-                score *= 0.8  # Penalización del 20% por estar extendida
-            if analysis.get('is_actionable_entry', False):
-                score += 10 # Bonificación de 10 puntos por setup accionable
-                
-            return min(round(score, 1), 100)
+            return min(round(final_score, 1), 100)
             
         except Exception as e:
             print(f"Error calculando Minervini Score: {e}")
@@ -555,7 +548,7 @@ class MinerviniStockScreener:
                     rs_rating=rs_rating,
                     debug_mode=debug_mode,
                     filter_name="Datos"
-                )
+            ), False
             
             # --- CÁLCULOS BÁSICOS INICIALES ---
             latest = df.iloc[-1]
@@ -575,20 +568,20 @@ class MinerviniStockScreener:
 
             # FILTROS TÉCNICOS
             passed, reason = self._check_trend_and_mas(current_price, ma_50, ma_150, ma_200, df)
-            if not passed: return self._build_rejection_result('Stage 1/3/4', reason, rs_rating, debug_mode, "Tendencia/MAs")
+            if not passed: return self._build_rejection_result('Stage 1/3/4', reason, rs_rating, debug_mode, "Tendencia/MAs"), False
 
             passed, reason, dist_low, dist_high = self._check_52_week_range_position(current_price, high_52w, low_52w, rs_rating)
-            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Rango 52w")
+            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Rango 52w"), False
             distance_from_low, distance_from_high = dist_low, dist_high # Guardar para el score final
 
             if not (rs_rating is not None and rs_rating >= self.MIN_RS_RATING):
-                return self._build_rejection_result('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING})", rs_rating, debug_mode, "RS Rating")
+                return self._build_rejection_result('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING})", rs_rating, debug_mode, "RS Rating"), False
 
             # --- ANÁLISIS DE PATRONES (VCP) - Se calcula solo si pasa los filtros anteriores ---
             vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
 
             passed, reason, pattern_score, institutional_accumulation = self._check_price_volume_pattern(df, vcp_analysis, volume_50d_avg)
-            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Patrón Precio/Volumen")
+            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Patrón Precio/Volumen"), False
 
             # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
             if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
@@ -599,21 +592,18 @@ class MinerviniStockScreener:
             # Esta es una optimización clave: solo hacemos la llamada a la API/caché
             # para las acciones que ya son técnicamente prometedoras.
             ticker_info, had_to_retry = fetch_info_for_symbol(symbol, cache_manager, session=session)
-            if had_to_retry:
-                # Aunque no usamos el contador aquí, la lógica de reintento es importante.
-                pass
             if not ticker_info or 'sector' not in ticker_info:
-                return self._build_rejection_result(stage_analysis, "Datos fundamentales (.info) no disponibles", rs_rating, debug_mode, "Fundamentales")
+                return self._build_rejection_result(stage_analysis, "Datos fundamentales (.info) no disponibles", rs_rating, debug_mode, "Fundamentales"), had_to_retry
 
             # FILTRO 8: SALUD FUNDAMENTAL (CRECIMIENTO Y RENTABILIDAD)
             passed, reason, earnings_acceleration, roe_strong = self._check_fundamental_health(ticker_info)
             if not passed:
-                return self._build_rejection_result(stage_analysis, reason, rs_rating, debug_mode, "Salud Fundamental")
+                return self._build_rejection_result(stage_analysis, reason, rs_rating, debug_mode, "Salud Fundamental"), had_to_retry
 
             # FILTRO 9: EVIDENCIA INSTITUCIONAL (HÍBRIDO)
             passes_institutional, institutional_score, institutional_details = self.hybrid_institutional_evidence(symbol, df, ticker_info, volume_50d_avg)
             if not passes_institutional:
-                return self._build_rejection_result(stage_analysis, "Evidencia institucional insuficiente", rs_rating, debug_mode, "Evidencia Institucional")
+                return self._build_rejection_result(stage_analysis, "Evidencia institucional insuficiente", rs_rating, debug_mode, "Evidencia Institucional"), had_to_retry
 
             if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS FUNDAMENTALES --- \n")
 
@@ -664,11 +654,11 @@ class MinerviniStockScreener:
                 'industry': ticker_info.get('industry', 'N/A'),
                 'market_cap': ticker_info.get('marketCap', 'N/A')
             }
-            return result
+            return result, had_to_retry
             
         except Exception as e:
             print(f"Error en análisis Minervini para {symbol}: {e}")
-            return self._build_rejection_result('Error', f'Error de cálculo: {e}', rs_rating, debug_mode, "Error Interno")
+            return self._build_rejection_result('Error', f'Error de cálculo: {e}', rs_rating, debug_mode, "Error Interno"), False
 
     def get_entry_signal(self, df, vcp_analysis, is_extended):
         """
@@ -698,7 +688,7 @@ class MinerviniStockScreener:
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
         stock_data = {}
         failed_symbols = []
-        info_retry_count = 0 # NUEVO: Contador de reintentos de .info
+        info_retry_count = 0
         
         for i, symbol in enumerate(tqdm(symbols, desc="    Analizando símbolos del lote", unit="símbolo", leave=False, ncols=120), 1):
             max_retries = 3
@@ -718,16 +708,14 @@ class MinerviniStockScreener:
                         stock_rs_rating = rs_ratings.get(symbol)
                         # La obtención de .info se ha movido DENTRO de get_minervini_analysis
                         # para que solo se ejecute en acciones que pasan los filtros técnicos.
-                        minervini_analysis = self.get_minervini_analysis(
+                        minervini_analysis, had_info_retry = self.get_minervini_analysis(
                             hist_with_ma, stock_rs_rating, symbol, cache_manager, self.session, debug_mode=False
                         )
-                        
-                        # Si el análisis devuelve None, es porque la acción fue descartada (ej. beneficios negativos)
-                        # O si no pasa los filtros, minervini_analysis será un dict mínimo.
-                        # En ambos casos, el procesamiento para este símbolo ha terminado.
-                        if minervini_analysis is None:
-                            success = True # Marcamos como éxito para no reintentar
-                            continue
+
+                        if had_info_retry:
+                            info_retry_count += 1
+
+                        # Siempre se procesa el resultado, ya que incluso las acciones rechazadas se guardan en el informe.
 
                         stock_data[symbol] = {
                             'data': hist_with_ma,
@@ -955,11 +943,28 @@ class TickerInfoCacheManager:
 
     def get(self, symbol):
         """Obtiene datos del caché si no están obsoletos."""
-        if symbol in self.cache_data:
-            entry = self.cache_data[symbol]
-            if (time.time() - entry.get('timestamp', 0)) < self.ttl_seconds:
-                return entry.get('data')
-        return None
+        entry = self.cache_data.get(symbol)
+        if not entry:
+            return None
+
+        # 1. Validación por tiempo (TTL)
+        if (time.time() - entry.get('timestamp', 0)) >= self.ttl_seconds:
+            return None # Expirado por tiempo
+
+        # 2. Validación por fecha de beneficios (la nueva lógica inteligente)
+        earnings_date_str = entry.get('earnings_date')
+        if earnings_date_str:
+            try:
+                # Compara la fecha de hoy con la fecha de beneficios guardada.
+                # Si hoy es igual o posterior a la fecha de beneficios, el caché está obsoleto.
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                if today_str >= earnings_date_str:
+                    print(f"  - ℹ️ Invalidando caché para {symbol} por fecha de beneficios pasada ({earnings_date_str}).")
+                    return None # Expirado por evento de beneficios
+            except Exception:
+                pass # Si hay error en la fecha, se ignora y se confía en el TTL
+
+        return entry.get('data')
 
     def get_stale(self, symbol):
         """Obtiene datos del caché, incluso si están obsoletos (para fallback)."""
@@ -967,11 +972,12 @@ class TickerInfoCacheManager:
             return self.cache_data[symbol].get('data')
         return None
 
-    def set(self, symbol, data):
+    def set(self, symbol, data, calendar_data=None):
         """Actualiza el caché en memoria para un símbolo."""
         self.cache_data[symbol] = {
             'timestamp': time.time(),
-            'data': data
+            'data': data,
+            'earnings_date': self._extract_earnings_date(calendar_data)
         }
         self.updated = True
 
@@ -989,6 +995,19 @@ class TickerInfoCacheManager:
         else:
             print("\nℹ️ No hubo actualizaciones en el caché de .info, no se guarda nada.")
 
+    def _extract_earnings_date(self, calendar_data):
+        """Extrae y formatea la próxima fecha de beneficios del diccionario de calendario."""
+        if not calendar_data or 'Earnings Date' not in calendar_data:
+            return None
+        
+        try:
+            # La fecha puede venir como una lista de datetimes
+            earnings_date = calendar_data['Earnings Date'][0]
+            return earnings_date.strftime('%Y-%m-%d')
+        except (TypeError, IndexError, AttributeError):
+            # Si el formato es inesperado, devuelve None
+            return None
+
 def fetch_info_for_symbol(symbol, cache_manager, session=None, max_retries=3):
     """
     Obtiene .info de yfinance de forma robusta, con reintentos y fallback a caché.
@@ -1004,10 +1023,17 @@ def fetch_info_for_symbol(symbol, cache_manager, session=None, max_retries=3):
         try:
             # Usar la sesión compartida para robustez. El timeout se gestiona a nivel de la sesión.
             ticker = yf.Ticker(symbol, session=session)
-            ticker_info = ticker.info
+            ticker_info = ticker.info  # Obtiene los datos fundamentales
+            
+            try:
+                calendar_data = ticker.calendar # Obtiene la fecha de beneficios
+            except Exception:
+                # Si falla la obtención del calendario, continuamos sin él.
+                # El caché no tendrá fecha de beneficios y se basará solo en el TTL.
+                calendar_data = None
             
             if ticker_info and 'symbol' in ticker_info:
-                cache_manager.set(symbol, ticker_info)
+                cache_manager.set(symbol, ticker_info, calendar_data)
                 # Si tuvo éxito pero no en el primer intento, fue un reintento exitoso.
                 return ticker_info, attempt > 0
             else:
