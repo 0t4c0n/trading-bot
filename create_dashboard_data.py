@@ -219,8 +219,8 @@ def create_minervini_dashboard_data():
                         "signal": str(row.get('Entry_Signal', 'N/A')),
                         "signal_text": str(row.get('Entry_Signal_Text', row.get('Entry_Signal', 'N/A'))),
                         "css_class": str(row.get('Entry_Signal_Class', 'consolidando')),
-                        "is_extended": bool(row.get('Is_Extended', False)),
-                        "priority": int(row.get('Signal_Priority', 99))
+                        "is_extended": bool(row.get('Is_Extended', False)), # Asegura que sea booleano
+                        "priority": int(row['Signal_Priority']) if pd.notna(row.get('Signal_Priority')) else 99 # Convierte a int de forma segura
                     },
                     "ma_levels": {
                         "ma_50": float(row.get('MA_50')) if pd.notna(row.get('MA_50')) else 0.0,
