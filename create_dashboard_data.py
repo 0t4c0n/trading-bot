@@ -245,14 +245,6 @@ def create_minervini_dashboard_data():
                 else:
                     stage_avg_scores[stage] = 0
             
-            # NUEVO: Calcular indicadores de amplitud de mercado
-            pct_above_ma200 = 0
-            if 'Current_Price' in all_df.columns and 'MA_200' in all_df.columns:
-                valid_ma_stocks = all_df.dropna(subset=['Current_Price', 'MA_200'])
-                if not valid_ma_stocks.empty:
-                    above_ma200 = (valid_ma_stocks['Current_Price'] > valid_ma_stocks['MA_200']).sum()
-                    pct_above_ma200 = round((above_ma200 / len(valid_ma_stocks)) * 100, 1)
-
             pct_rs_strong = 0
             if 'RS_Rating' in all_df.columns:
                 valid_rs_stocks = all_df.dropna(subset=['RS_Rating'])
@@ -271,13 +263,12 @@ def create_minervini_dashboard_data():
                 "total_stage2": total_stage2,
                 "market_health": "Strong" if len(stage2_df) > 0 else "Weak",
                 # Datos de amplitud
-                "pct_above_ma200": pct_above_ma200,
                 "pct_rs_strong": pct_rs_strong,
                 "pct_in_stage2": pct_in_stage2
             }
             
             print(f"✓ Análisis de mercado por stages calculado")
-            print(f"✓ Indicadores de amplitud: >MA200: {pct_above_ma200}%, RS>70: {pct_rs_strong}%")
+            print(f"✓ Indicadores de amplitud: RS>70: {pct_rs_strong}%, en Stage 2: {pct_in_stage2}%")
         
         # Análisis de eliminación Minervini
         dashboard_data["elimination_analysis"] = {
