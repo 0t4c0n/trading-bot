@@ -149,6 +149,29 @@
             align-items: center;
             padding: 0 5px;
         }
+
+        .sort-controls {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+        }
+
+        .sort-btn {
+            background-color: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.75em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .sort-btn.active, .sort-btn:hover {
+            background-color: #3b82f6;
+            color: white;
+            border-color: #2563eb;
+        }
         
         .stock-card {
             background: white;
@@ -497,6 +520,53 @@
             font-weight: 600;
             color: white;
         }
+
+        .elimination-analysis {
+            background: white;
+            border-radius: 15px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+
+        .elimination-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .elimination-item {
+            font-size: 0.8em;
+        }
+
+        .elimination-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        .reason-text {
+            color: #1a202c;
+            font-weight: 600;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            background-color: #e2e8f0;
+            border-radius: 10px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background-color: #ef4444; /* Rojo para descarte */
+            border-radius: 10px;
+            transition: width 0.5s ease-in-out;
+        }
         @media (max-width: 480px) {
             .container {
                 margin: 0;
@@ -530,6 +600,9 @@
     </button>
 
     <script>
+        let allTopPicks = []; // Almacenar los datos originales para poder reordenar
+        let fullData = {}; // Almacenar el objeto de datos completo para reutilizarlo
+
         async function loadData() {
             const contentEl = document.getElementById('content');
             contentEl.innerHTML = `<div class="loading"><div>🔄 Cargando datos Minervini...</div></div>`;
@@ -540,6 +613,9 @@
                     throw new Error(`Error de red: ${response.statusText}`);
                 }
                 const data = await response.json();
+                allTopPicks = data.top_picks || []; // Guardar los datos originales
+                fullData = data; // Guardar el objeto de datos completo
+
                 renderDashboard(data);
             } catch (error) {
                 console.error('Error al cargar data.json:', error);
@@ -609,105 +685,17 @@
 
             let topPicksHtml = `
                 <div class="top-picks">
-                    <div class="section-title">${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</div>
-            `;
-
-            if (data.top_picks && data.top_picks.length > 0) {
-                data.top_picks.forEach(stock => {
-                    const passesAll = stock.stage_analysis.passes_all_filters;
-                    const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
-                    const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
-                    
-                    // Lógica de indicadores mejorada para distinguir VCP de solo acumulación
-                    let indicatorsHtml = '';
-                    if (stock.technical_indicators.vcp_detected) {
-                        indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
-                    } else if (stock.technical_indicators.institutional_accumulation) {
-                        indicatorsHtml += '<span class="indicator-badge accumulation-badge">🏦 Accumulation</span>';
-                    }
-
-                    // Otros indicadores independientes
-                    if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
-                    if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
-                    if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
-                    
-                    const entrySignal = stock.entry_point.signal;
-                    const vcpDetected = stock.technical_indicators.vcp_detected;
-                    let entrySignalText = entrySignal;
-                    let entrySignalClass = entrySignal.toLowerCase().replace(/ /g, '-');
-
-                    // Lógica para clarificar la señal de entrada y hacerla más descriptiva
-                    if (entrySignal === 'VCP Setup' || (entrySignal === 'Consolidando' && vcpDetected)) {
-                        // Unifica ambos casos (el correcto y el confuso) en una sola señal clara
-                        entrySignalText = 'VCP en Formación';
-                        entrySignalClass = 'vcp-setup';
-                    } else if (entrySignal === 'Pivot Point') {
-                        entrySignalText = 'Punto Pivote (¡Listo!)';
-                    } else if (entrySignal.includes('MA-Bounce')) {
-                        entrySignalText = `Rebote en MA-${entrySignal.split('-')[2]}`;
-                    }
-
-                    topPicksHtml += `
-                        <div class="stock-card ${cardClass}">
-                            ${perfectBadge}
-                            <div class="rank">#${stock.rank}</div>
-                            <div class="stock-header">
-                                <div class="stock-info">
-                                    <h3>${stock.symbol}</h3>
-                                    <div class="company">${stock.company || ''}</div>
-                                    <div class="sector">${stock.sector || ''}</div>
-                                </div>
-                                <div class="stock-price">
-                                    <div class="price">$${stock.price.toFixed(2)}</div>
-                                    <div class="minervini-score">Score: ${stock.minervini_score.toFixed(1)}</div>
-                                </div>
-                            </div>
-                            
-                            <div class="stats-grid">
-                                <div class="stat-item">
-                                    <div class="stage-badge">${stock.stage_analysis.icon} ${stock.stage_analysis.stage}</div>
-                                    <div class="stat-label">Stage Analysis</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stage-badge">${stock.relative_strength.strength_label}</div>
-                                    <div class="stat-label">RS Rating: ${stock.relative_strength.rs_rating.toFixed(1)}</div>
-                                </div>
-                            </div>
-
-                            ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
-                            
-                            <div class="entry-signal ${entrySignalClass}">
-                                🚦 Punto de Entrada: <strong>${entrySignalText}</strong>
-                            </div>
-                        </div>
-                    `;
-                });
-            } else {
-                topPicksHtml += `
-                    <div class="no-results">
-                        <div class="no-results-icon">🎯</div>
-                        <div class="no-results-title">Sin Candidatos Ideales Hoy</div>
-                        <div class="no-results-subtitle">Ninguna acción pasó los 11 filtros estrictos de Minervini.</div>
-                        <div class="minervini-criteria">
-                            <div class="criteria-title">📋 Metodología SEPA</div>
-                            <div class="criteria-section">
-                                <div class="criteria-subtitle">Filtros Técnicos</div>
-                                <div class="criteria-list">
-                                    ${data.minervini_criteria.technical_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
-                                </div>
-                            </div>
-                            <div class="criteria-section">
-                                <div class="criteria-subtitle">Filtros Fundamentales</div>
-                                <div class="criteria-list">
-                                    ${data.minervini_criteria.fundamental_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
-                                </div>
-                            </div>
+                    <div class="section-title">
+                        <span>${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</span>
+                        <div class="sort-controls">
+                            <button id="sort-by-rank" class="sort-btn active" onclick="sortPicks('rank')">Por Ranking</button>
+                            <button id="sort-by-signal" class="sort-btn" onclick="sortPicks('signal')">Por Señal</button>
                         </div>
                     </div>
-                `;
-            }
-
-            topPicksHtml += '</div>';
+                    <div id="top-picks-list">
+                        <!-- El contenido de las acciones se renderizará aquí -->
+                    </div>
+            `;
 
             let marketHealthHtml = '';
             if (data.market_analysis && data.market_analysis.stage_distribution) {
@@ -748,6 +736,34 @@
                 `;
             }
 
+            let eliminationHtml = '';
+            const eliminationAnalysis = data.elimination_analysis;
+            if (eliminationAnalysis && eliminationAnalysis.top_reasons && Object.keys(eliminationAnalysis.top_reasons).length > 0) {
+                eliminationHtml = `
+                    <div class="elimination-analysis">
+                        <div class="section-title">🚫 Principales Razones de Descarte</div>
+                        <div class="elimination-list">
+                `;
+
+                for (const [reason, details] of Object.entries(eliminationAnalysis.top_reasons)) {
+                    eliminationHtml += `
+                        <div class="elimination-item">
+                            <div class="elimination-header">
+                                <span class="reason-text">${reason}</span>
+                                <span class="reason-stats">${details.count} (${details.percentage}%)</span>
+                            </div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar" style="width: ${details.percentage}%;"></div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                eliminationHtml += `
+                        </div>
+                    </div>
+                `;
+            }
 
             const updateTime = new Date(data.timestamp).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
             const footerHtml = `
@@ -756,8 +772,136 @@
                     <small>Desarrollado por 0t4c0n 🦊 | Metodología SEPA de Mark Minervini</small>
                 </div>
             `;
+            contentEl.innerHTML = summaryHtml + marketBreadthHtml + marketHealthHtml + eliminationHtml + topPicksHtml + footerHtml;
+            renderTopPicks(allTopPicks, data); // Renderizar la lista inicial
+        }
 
-            contentEl.innerHTML = summaryHtml + marketBreadthHtml + marketHealthHtml + topPicksHtml + footerHtml;
+        function renderTopPicks(picks, data) {
+            const container = document.getElementById('top-picks-list');
+            let picksHtml = '';
+            if (picks && picks.length > 0) {
+                    picks.forEach(stock => {
+                    const passesAll = stock.stage_analysis.passes_all_filters;
+                    const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
+                    const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
+                    
+                    // Lógica de indicadores mejorada para distinguir VCP de solo acumulación
+                    let indicatorsHtml = '';
+                    if (stock.technical_indicators.vcp_detected) {
+                        indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
+                    } else if (stock.technical_indicators.institutional_accumulation) {
+                        indicatorsHtml += '<span class="indicator-badge accumulation-badge">🏦 Accumulation</span>';
+                    }
+
+                    // Otros indicadores independientes
+                    if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
+                    if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
+                    if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
+                    
+                    const entrySignal = stock.entry_point.signal;
+                    const vcpDetected = stock.technical_indicators.vcp_detected;
+                    let entrySignalText = entrySignal;
+                    let entrySignalClass = entrySignal.toLowerCase().replace(/ /g, '-');
+
+                    // Lógica para clarificar la señal de entrada y hacerla más descriptiva
+                    if (entrySignal === 'VCP Setup' || (entrySignal === 'Consolidando' && vcpDetected)) {
+                        // Unifica ambos casos. El patrón VCP está presente, pero aún no en un punto de entrada.
+                        // Se añade "(Vigilar)" para clarificar que es una señal para monitorear, no para actuar inmediatamente.
+                        // Esto resuelve la duda de por qué aparece el badge "VCP Pattern" sin ser un punto de entrada accionable.
+                        entrySignalText = 'VCP en Formación (Vigilar)';
+                        entrySignalClass = 'vcp-setup';
+                    } else if (entrySignal === 'Pivot Point') {
+                        entrySignalText = 'Punto Pivote (¡Listo!)';
+                    } else if (entrySignal.includes('MA-Bounce')) {
+                        entrySignalText = `Rebote en MA-${entrySignal.split('-')[2]}`;
+                    }
+
+                    picksHtml += `
+                        <div class="stock-card ${cardClass}">
+                            ${perfectBadge}
+                            <div class="rank">#${stock.rank}</div>
+                            <div class="stock-header">
+                                <div class="stock-info">
+                                    <h3>${stock.symbol}</h3>
+                                    <div class="company">${stock.company || ''}</div>
+                                    <div class="sector">${stock.sector || ''}</div>
+                                </div>
+                                <div class="stock-price">
+                                    <div class="price">$${stock.price.toFixed(2)}</div>
+                                    <div class="minervini-score">Score: ${stock.minervini_score.toFixed(1)}</div>
+                                </div>
+                            </div>
+                            
+                            <div class="stats-grid">
+                                <div class="stat-item">
+                                    <div class="stage-badge">${stock.stage_analysis.icon} ${stock.stage_analysis.stage}</div>
+                                    <div class="stat-label">Stage Analysis</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stage-badge">${stock.relative_strength.strength_label}</div>
+                                    <div class="stat-label">RS Rating: ${stock.relative_strength.rs_rating.toFixed(1)}</div>
+                                </div>
+                            </div>
+
+                            ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
+                            
+                            <div class="entry-signal ${entrySignalClass}">
+                                🚦 Punto de Entrada: <strong>${entrySignalText}</strong>
+                            </div>
+                        </div>
+                    `;
+                    });
+                } else {
+                    picksHtml = `
+                    <div class="no-results">
+                        <div class="no-results-icon">🎯</div>
+                        <div class="no-results-title">Sin Candidatos Ideales Hoy</div>
+                        <div class="no-results-subtitle">Ninguna acción pasó los 11 filtros estrictos de Minervini.</div>
+                        <div class="minervini-criteria">
+                            <div class="criteria-title">📋 Metodología SEPA</div>
+                            <div class="criteria-section">
+                                <div class="criteria-subtitle">Filtros Técnicos</div>
+                                <div class="criteria-list">
+                                    ${data.minervini_criteria.technical_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
+                                </div>
+                            </div>
+                            <div class="criteria-section">
+                                <div class="criteria-subtitle">Filtros Fundamentales</div>
+                                <div class="criteria-list">
+                                    ${data.minervini_criteria.fundamental_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+            }
+            container.innerHTML = picksHtml;
+        }
+
+        function sortPicks(criteria) {
+            // Actualizar el estado visual de los botones
+            document.getElementById('sort-by-rank').classList.toggle('active', criteria === 'rank');
+            document.getElementById('sort-by-signal').classList.toggle('active', criteria === 'signal');
+
+            let sortedPicks = [...allTopPicks]; // Crear una copia para no modificar el original
+
+            if (criteria === 'signal') {
+                sortedPicks.sort((a, b) => {
+                    const priorityA = a.entry_point.priority || 99;
+                    const priorityB = b.entry_point.priority || 99;
+
+                    if (priorityA !== priorityB) {
+                        return priorityA - priorityB;
+                    }
+                    // Si la prioridad es la misma, ordenar por el mejor ranking (menor es mejor)
+                    return a.rank - b.rank;
+                });
+            } else { // 'rank' es el default
+                sortedPicks.sort((a, b) => a.rank - b.rank);
+            }
+
+            // Re-renderizar la lista con los datos ordenados
+            renderTopPicks(sortedPicks, fullData);
         }
 
         document.addEventListener('DOMContentLoaded', loadData);

@@ -131,17 +131,44 @@ def create_minervini_dashboard_data():
         
         # Procesar datos para el ranking
         if not all_df.empty and 'Minervini_Score' in all_df.columns:
-            print("Procesando ranking por Minervini Score...")
+            print("Procesando un ranking mejorado para el dashboard...")
+
+            # 1. Obtener el top 10 por score (candidatos de más alta calidad)
+            top_by_score = all_df.sort_values(
+                by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'],
+                ascending=[False, False, False]
+            ).head(10)
+            print(f"✓ Top 10 por score identificado.")
+
+            # 2. Obtener el top 10 por señal de entrada (candidatos más accionables)
+            signal_priority = {
+                'Pivot Point': 1,
+                'MA-Bounce-21': 2,
+                'MA-Bounce-50': 2,
+                'VCP Setup': 3,
+                'Consolidando': 4,
+                'Extendido': 5
+            }
+            all_df['Signal_Priority'] = all_df['Entry_Signal'].map(signal_priority).fillna(99)
             
-            # CORRECCIÓN MEJORADA: Ordenar por 3 niveles:
-            # 1. Las que pasan todos los filtros.
-            # 2. El Minervini Score.
-            # 3. El RS Rating como desempate final.
-            # Esto asegura que los candidatos "perfectos" (✅ All Filters) siempre aparezcan primero.
-            all_sorted = all_df.sort_values(by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'], ascending=[False, False, False])
+            top_by_signal = all_df.sort_values(
+                by=['Signal_Priority', 'Minervini_Score'],
+                ascending=[True, False]
+            ).head(10)
+            print(f"✓ Top 10 por señal de entrada identificado.")
+
+            # 3. Combinar, eliminar duplicados y re-rankear
+            combined_top_stocks = pd.concat([top_by_score, top_by_signal]).drop_duplicates(subset=['Symbol'])
             
-            # Top 15 para dashboard (mostraremos top 10, pero calculamos más por si hay empates)
-            top_stocks = all_sorted.head(10)
+            # Re-ordenar la lista combinada para establecer el ranking final por defecto
+            final_sorted_list = combined_top_stocks.sort_values(
+                by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'],
+                ascending=[False, False, False]
+            )
+            
+            # Seleccionar el top 15 final para el dashboard
+            top_stocks = final_sorted_list.head(15)
+            print(f"✓ Lista combinada y curada de {len(top_stocks)} acciones creada.")
             
             for i, (_, row) in enumerate(top_stocks.iterrows()):
                 stage = row.get('Stage_Analysis', 'Unknown')
@@ -190,7 +217,8 @@ def create_minervini_dashboard_data():
                     },
                     "entry_point": {
                         "signal": str(row.get('Entry_Signal', 'N/A')),
-                        "is_extended": bool(row.get('Is_Extended', False))
+                        "is_extended": bool(row.get('Is_Extended', False)),
+                        "priority": int(row.get('Signal_Priority', 99))
                     },
                     "ma_levels": {
                         "ma_50": float(row.get('MA_50')) if pd.notna(row.get('MA_50')) else 0.0,
@@ -257,16 +285,14 @@ def create_minervini_dashboard_data():
         }
         
         if len(all_df) > len(stage2_df):
-            filter_reasons_count = {}
             total_stocks = len(all_df)
             
-            for _, row in all_df.iterrows():
-                if not row.get('Passes_All_Filters', False):
-                    reasons = str(row.get('Filter_Reasons', '')).split(';')
-                    for reason in reasons:
-                        reason = reason.strip()
-                        if reason and reason != "✅ PASA TODOS LOS FILTROS MINERVINI" and reason != "nan":
-                            filter_reasons_count[reason] = filter_reasons_count.get(reason, 0) + 1
+            # Forma optimizada y "pandastic" de contar las razones de eliminación
+            eliminated_stocks = all_df[all_df['Passes_All_Filters'] == False]
+            reasons_series = eliminated_stocks['Filter_Reasons'].str.split(';').explode().str.strip()
+            # Limpiar valores no deseados y contar
+            valid_reasons = reasons_series[reasons_series.ne('') & ~reasons_series.isin(['✅ PASA TODOS LOS FILTROS MINERVINI', 'nan'])]
+            filter_reasons_count = valid_reasons.value_counts().to_dict()
             
             # Top 10 razones para el dashboard
             for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
