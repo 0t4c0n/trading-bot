@@ -799,22 +799,8 @@
                     if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
                     
                     const entrySignal = stock.entry_point.signal;
-                    const vcpDetected = stock.technical_indicators.vcp_detected;
-                    let entrySignalText = entrySignal;
-                    let entrySignalClass = entrySignal.toLowerCase().replace(/ /g, '-');
-
-                    // Lógica para clarificar la señal de entrada y hacerla más descriptiva
-                    if (entrySignal === 'VCP Setup' || (entrySignal === 'Consolidando' && vcpDetected)) {
-                        // Unifica ambos casos. El patrón VCP está presente, pero aún no en un punto de entrada.
-                        // Se añade "(Vigilar)" para clarificar que es una señal para monitorear, no para actuar inmediatamente.
-                        // Esto resuelve la duda de por qué aparece el badge "VCP Pattern" sin ser un punto de entrada accionable.
-                        entrySignalText = 'VCP en Formación (Vigilar)';
-                        entrySignalClass = 'vcp-setup';
-                    } else if (entrySignal === 'Pivot Point') {
-                        entrySignalText = 'Punto Pivote (¡Listo!)';
-                    } else if (entrySignal.includes('MA-Bounce')) {
-                        entrySignalText = `Rebote en MA-${entrySignal.split('-')[2]}`;
-                    }
+                    const entrySignalText = stock.entry_point.signal_text;
+                    const entrySignalClass = stock.entry_point.css_class;
 
                     picksHtml += `
                         <div class="stock-card ${cardClass}">

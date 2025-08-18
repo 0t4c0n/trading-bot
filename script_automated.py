@@ -623,7 +623,9 @@ class MinerviniStockScreener:
 
             # --- ¡ÉXITO! LA ACCIÓN PASA TODOS LOS FILTROS ---
             # Calcular la señal de entrada solo para las acciones que pasan todos los filtros
-            entry_signal, is_actionable = self.get_entry_signal(df, vcp_analysis, is_extended)
+            entry_signal_info = self.get_entry_signal(df, vcp_analysis, is_extended)
+            entry_signal = entry_signal_info["signal"]
+            is_actionable = entry_signal_info["is_actionable"]
 
             # CORRECCIÓN CLAVE: Asegurarse de que 'entry_signal' se incluye para el cálculo del score.
             analysis_for_scoring = {
@@ -656,7 +658,9 @@ class MinerviniStockScreener:
                 'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None,
                 'pattern_score': pattern_score,
                 'vcp_detected': vcp_analysis['vcp_detected'],
-                'entry_signal': entry_signal, 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
+                'entry_signal': entry_signal,
+                'entry_signal_text': entry_signal_info["text"],
+                'entry_signal_class': entry_signal_info["css_class"], 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
                 'vcp_analysis': vcp_analysis,
                 'institutional_accumulation': institutional_accumulation,
                 'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
@@ -679,15 +683,25 @@ class MinerviniStockScreener:
     def get_entry_signal(self, df, vcp_analysis, is_extended):
         """
         Determina la mejor señal de entrada analizando múltiples patrones.
-        Devuelve la señal (string) y si es un punto de entrada accionable (boolean).
+        Devuelve un diccionario con la señal, texto para mostrar, clase CSS y si es accionable.
         """
         # Prioridad 1: Pivote VCP (la señal de más bajo riesgo)
         if vcp_analysis.get('is_in_pivot', False):
-            return "Pivot Point", True
+            return {
+                "signal": "Pivot Point",
+                "text": "Punto Pivote (¡Listo!)",
+                "css_class": "pivot-point",
+                "is_actionable": True
+            }
 
         # Prioridad 1.5: VCP general detectado (setup en formación)
         if vcp_analysis.get('vcp_detected', False):
-            return "VCP Setup", True
+            return {
+                "signal": "VCP Setup",
+                "text": "VCP en Formación (Vigilar)",
+                "css_class": "vcp-setup",
+                "is_actionable": True
+            }
 
         # Prioridad 2 y 3: Rebote en medias móviles (50 y 21 días)
         # Itera sobre los parámetros definidos en __init__ para mayor claridad y mantenibilidad.
@@ -696,13 +710,29 @@ class MinerviniStockScreener:
         current_price = df['Close'].iloc[-1]
         for ma_period, params in self.BOUNCE_PARAMS.items():
             if self._check_ma_bounce(df, current_price, ma_period=ma_period, **params):
-                return f"MA-Bounce-{ma_period}", True
+                signal = f"MA-Bounce-{ma_period}"
+                return {
+                    "signal": signal,
+                    "text": f"Rebote en MA-{ma_period}",
+                    "css_class": signal.lower().replace('_', '-'),
+                    "is_actionable": True
+                }
 
         # Si no hay señal de entrada, determinar si está extendido o consolidando
         if is_extended:
-            return "Extendido", False
+            return {
+                "signal": "Extendido",
+                "text": "Extendido",
+                "css_class": "extendido",
+                "is_actionable": False
+            }
         
-        return "Consolidando", False
+        return {
+            "signal": "Consolidando",
+            "text": "Consolidando",
+            "css_class": "consolidando",
+            "is_actionable": False
+        }
     
     def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, cache_manager):
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
@@ -905,6 +935,8 @@ class MinerviniStockScreener:
                     'Stage_Analysis': analysis.get('stage_analysis'),
                     'Passes_Technical': analysis.get('passes_minervini_technical'),
                     'Entry_Signal': analysis.get('entry_signal'),
+                    'Entry_Signal_Text': analysis.get('entry_signal_text'),
+                    'Entry_Signal_Class': analysis.get('entry_signal_class'),
                     'Is_Extended': analysis.get('is_extended'),
                     'Passes_Fundamental': analysis.get('passes_minervini_fundamental'),
                     'Passes_All_Filters': analysis.get('passes_all_filters'),

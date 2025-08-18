@@ -149,7 +149,7 @@ def create_minervini_dashboard_data():
                 'Consolidando': 4,
                 'Extendido': 5
             }
-            all_df['Signal_Priority'] = all_df['Entry_Signal'].map(signal_priority).fillna(99)
+            all_df['Signal_Priority'] = all_df['Entry_Signal'].map(signal_priority).fillna(99).astype(int)
             
             top_by_signal = all_df.sort_values(
                 by=['Signal_Priority', 'Minervini_Score'],
@@ -217,6 +217,8 @@ def create_minervini_dashboard_data():
                     },
                     "entry_point": {
                         "signal": str(row.get('Entry_Signal', 'N/A')),
+                        "signal_text": str(row.get('Entry_Signal_Text', row.get('Entry_Signal', 'N/A'))),
+                        "css_class": str(row.get('Entry_Signal_Class', 'consolidando')),
                         "is_extended": bool(row.get('Is_Extended', False)),
                         "priority": int(row.get('Signal_Priority', 99))
                     },
