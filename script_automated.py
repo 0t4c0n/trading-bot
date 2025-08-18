@@ -694,16 +694,7 @@ class MinerviniStockScreener:
                 "is_actionable": True
             }
 
-        # Prioridad 1.5: VCP general detectado (setup en formación)
-        if vcp_analysis.get('vcp_detected', False):
-            return {
-                "signal": "VCP Setup",
-                "text": "VCP en Formación (Vigilar)",
-                "css_class": "vcp-setup",
-                "is_actionable": True
-            }
-
-        # Prioridad 2 y 3: Rebote en medias móviles (50 y 21 días)
+        # Prioridad 2: Rebote en medias móviles (50 y 21 días)
         # Itera sobre los parámetros definidos en __init__ para mayor claridad y mantenibilidad.
         # El orden en el diccionario (si Python >= 3.7) o la definición de la lista de prioridades
         # asegura que se compruebe primero la MA50.
@@ -717,6 +708,15 @@ class MinerviniStockScreener:
                     "css_class": signal.lower().replace('_', '-'),
                     "is_actionable": True
                 }
+
+        # Prioridad 3: VCP general detectado (setup en formación)
+        if vcp_analysis.get('vcp_detected', False):
+            return {
+                "signal": "VCP Setup",
+                "text": "VCP en Formación (Vigilar)",
+                "css_class": "vcp-setup",
+                "is_actionable": True
+            }
 
         # Si no hay señal de entrada, determinar si está extendido o consolidando
         if is_extended:
