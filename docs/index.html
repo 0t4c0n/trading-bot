@@ -190,21 +190,16 @@
             border-color: #3b82f6;
         }
         
-        /* Añade espacio a la derecha para el precio solo si la tarjeta tiene la insignia "All Filters" */
-        .stock-card.has-badge .stock-price {
-            padding-right: 95px;
-        }
-        
         .stock-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
             margin-bottom: 12px;
+            padding-left: 40px; /* Espacio para el rank */
         }
         
-        /* Añade padding a la izquierda para dejar espacio al número del ranking */
         .stock-info {
-            padding-left: 30px;
+            /* El padding-left se eliminó, ahora se gestiona en .stock-header */
         }
 
         .stock-info h3 {
@@ -228,7 +223,6 @@
             text-align: right;
             flex-shrink: 0;
             margin-left: 10px;
-            /* El padding-right se añade dinámicamente con la clase .has-badge */
         }
         
         .price {
@@ -682,10 +676,6 @@
                 <div class="top-picks">
                     <div class="section-title">
                         <span>${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</span>
-                        <div class="sort-controls">
-                            <button id="sort-by-rank" class="sort-btn active" onclick="sortPicks('rank')">Por Ranking</button>
-                            <button id="sort-by-signal" class="sort-btn" onclick="sortPicks('signal')">Por Señal</button>
-                        </div>
                     </div>
                     <div id="top-picks-list">
                         <!-- El contenido de las acciones se renderizará aquí -->
@@ -808,7 +798,6 @@
                                     <div class="sector">${stock.sector || ''}</div>
                                 </div>
                                 <div class="stock-price">
-                                    <div class="price">$${stock.price.toFixed(2)}</div>
                                     <div class="minervini-score">Score: ${stock.minervini_score.toFixed(1)}</div>
                                 </div>
                             </div>
@@ -857,32 +846,6 @@
                     `;
             }
             container.innerHTML = picksHtml;
-        }
-
-        function sortPicks(criteria) {
-            // Actualizar el estado visual de los botones
-            document.getElementById('sort-by-rank').classList.toggle('active', criteria === 'rank');
-            document.getElementById('sort-by-signal').classList.toggle('active', criteria === 'signal');
-
-            let sortedPicks = [...allTopPicks]; // Crear una copia para no modificar el original
-
-            if (criteria === 'signal') {
-                sortedPicks.sort((a, b) => {
-                    const priorityA = a.entry_point.priority || 99;
-                    const priorityB = b.entry_point.priority || 99;
-
-                    if (priorityA !== priorityB) {
-                        return priorityA - priorityB;
-                    }
-                    // Si la prioridad es la misma, ordenar por el mejor ranking (menor es mejor)
-                    return a.rank - b.rank;
-                });
-            } else { // 'rank' es el default
-                sortedPicks.sort((a, b) => a.rank - b.rank);
-            }
-
-            // Re-renderizar la lista con los datos ordenados
-            renderTopPicks(sortedPicks, fullData);
         }
 
         document.addEventListener('DOMContentLoaded', loadData);

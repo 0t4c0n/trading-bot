@@ -131,44 +131,14 @@ def create_minervini_dashboard_data():
         
         # Procesar datos para el ranking
         if not all_df.empty and 'Minervini_Score' in all_df.columns:
-            print("Procesando un ranking mejorado para el dashboard...")
+            print("Procesando el ranking para el dashboard...")
 
-            # 1. Obtener el top 10 por score (candidatos de más alta calidad)
-            top_by_score = all_df.sort_values(
+            # Ordenar por los criterios principales y seleccionar el top 15
+            top_stocks = all_df.sort_values(
                 by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'],
                 ascending=[False, False, False]
-            ).head(10)
-            print(f"✓ Top 10 por score identificado.")
-
-            # 2. Obtener el top 10 por señal de entrada (candidatos más accionables)
-            signal_priority = {
-                'Pivot Point': 1,
-                'MA-Bounce-21': 2,
-                'MA-Bounce-50': 2,
-                'VCP Setup': 3,
-                'Consolidando': 4,
-                'Extendido': 5
-            }
-            all_df['Signal_Priority'] = all_df['Entry_Signal'].map(signal_priority).fillna(99).astype(int)
-            
-            top_by_signal = all_df.sort_values(
-                by=['Signal_Priority', 'Minervini_Score'],
-                ascending=[True, False]
-            ).head(10)
-            print(f"✓ Top 10 por señal de entrada identificado.")
-
-            # 3. Combinar, eliminar duplicados y re-rankear
-            combined_top_stocks = pd.concat([top_by_score, top_by_signal]).drop_duplicates(subset=['Symbol'])
-            
-            # Re-ordenar la lista combinada para establecer el ranking final por defecto
-            final_sorted_list = combined_top_stocks.sort_values(
-                by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'],
-                ascending=[False, False, False]
-            )
-            
-            # Seleccionar el top 15 final para el dashboard
-            top_stocks = final_sorted_list.head(15)
-            print(f"✓ Lista combinada y curada de {len(top_stocks)} acciones creada.")
+            ).head(15)
+            print(f"✓ Top 15 por score identificado: {len(top_stocks)} acciones.")
             
             for i, (_, row) in enumerate(top_stocks.iterrows()):
                 stage = row.get('Stage_Analysis', 'Unknown')
@@ -219,8 +189,7 @@ def create_minervini_dashboard_data():
                         "signal": str(row.get('Entry_Signal', 'N/A')),
                         "signal_text": str(row.get('Entry_Signal_Text', row.get('Entry_Signal', 'N/A'))),
                         "css_class": str(row.get('Entry_Signal_Class', 'consolidando')),
-                        "is_extended": bool(row.get('Is_Extended', False)), # Asegura que sea booleano
-                        "priority": int(row['Signal_Priority']) if pd.notna(row.get('Signal_Priority')) else 99 # Convierte a int de forma segura
+                        "is_extended": bool(row.get('Is_Extended', False)) # Asegura que sea booleano
                     },
                     "ma_levels": {
                         "ma_50": float(row.get('MA_50')) if pd.notna(row.get('MA_50')) else 0.0,
