@@ -7,7 +7,6 @@ import json
 from io import StringIO
 import os
 from tqdm import tqdm
-import numpy as np
 
 class MinerviniStockScreener:
     def __init__(self):
@@ -625,10 +624,6 @@ class MinerviniStockScreener:
             high_52w, low_52w = self.calculate_52_week_range(df)
             volume_50d_avg = df['Volume'].tail(50).mean()
 
-            # --- RS LINE EN NUEVOS MÁXIMOS ---
-            rs_line_signal = self.calculate_rs_line_signal(df, spy_df)
-            rs_line_new_high = rs_line_signal['rs_line_new_high']
-
             # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE Y EL DASHBOARD) ---
             price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
             price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
@@ -655,6 +650,10 @@ class MinerviniStockScreener:
             if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
             passes_technical = True
             stage_analysis = "Stage 2 (Uptrend)"
+
+            # --- RS LINE EN NUEVOS MÁXIMOS (solo para stocks que pasan filtros técnicos) ---
+            rs_line_signal = self.calculate_rs_line_signal(df, spy_df)
+            rs_line_new_high = rs_line_signal['rs_line_new_high']
 
             # --- OBTENER DATOS FUNDAMENTALES (SOLO SI PASA FILTROS TÉCNICOS) ---
             # Esta es una optimización clave: solo hacemos la llamada a la API/caché
@@ -1348,41 +1347,29 @@ def _run_analysis_pipeline(screener, cache_manager):
     industry_ranks = screener.rank_industries_by_rs(rs_ratings)
     print(f"✓ {len(industry_ranks)} grupos industriales rankeados.")
 
-    # PASO 4: Análisis Minervini completo usando los RS Ratings pre-calculados
-    batch_size = 30
-    print(f"\nIniciando análisis de {len(symbols_to_process)} acciones con criterios Minervini SEPA...")
-    print("Usando RS Ratings pre-calculados para mayor precisión.\n")
+    # PASO 3.6: Pre-filtro por RS Rating + ordenar mejores candidatos primero
+    # Eliminamos antes del análisis todo el universo con RS bajo, que nunca pasaría el filtro.
+    # El margen de 2 puntos evita descartar acciones justo en el límite por redondeo.
+    rs_prefilter = screener.MIN_RS_RATING - 2
+    eligible_rs = rs_ratings[rs_ratings >= rs_prefilter].sort_values(ascending=False)
+    symbols_to_process = [s for s in eligible_rs.index if s in all_historical_data]
+    eliminated = len(all_symbols) - len(symbols_to_process)
+    print(f"\n✓ Pre-filtro RS ≥ {rs_prefilter}: {len(symbols_to_process)} candidatos "
+          f"({eliminated} descartados por RS insuficiente, ordenados de mayor a menor RS).\n")
 
-    total_batches = (len(symbols_to_process) + batch_size - 1) // batch_size
-    all_stock_data = {}
-    all_failed = []
+    if not symbols_to_process:
+        print("❌ Ningún símbolo supera el umbral mínimo de RS Rating.")
+        return {}, []
 
-    for batch_num in range(total_batches):
-        print(f"\n--- Procesando Lote {batch_num + 1}/{total_batches} ---")
-        start_idx = batch_num * batch_size
-        end_idx = min(start_idx + batch_size, len(symbols_to_process))
-        batch_symbols = symbols_to_process[start_idx:end_idx]
+    # PASO 4: Análisis Minervini — proceso único sin lotes artificiales
+    print(f"Iniciando análisis Minervini SEPA de {len(symbols_to_process)} candidatos...")
+    all_stock_data, all_failed = screener.process_stocks_with_minervini(
+        symbols_to_process, all_historical_data, rs_ratings, cache_manager,
+        spy_df=spy_df, industry_ranks=industry_ranks
+    )
 
-        batch_data, batch_failed, batch_retries = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager, spy_df=spy_df, industry_ranks=industry_ranks)
-
-        all_stock_data.update(batch_data)
-        all_failed.extend(batch_failed)
-
-        batch_passed = sum(1 for data in batch_data.values() if data['minervini_analysis']['passes_all_filters'])
-        batch_filtered = len(batch_data) - batch_passed
-        avg_score = np.mean([data['minervini_analysis']['minervini_score'] for data in batch_data.values()]) if batch_data else 0
-
-        summary_str = f"Lote completado: {batch_passed} Stage 2 | {batch_filtered} Filtradas | Score Promedio: {avg_score:.1f}"
-        problems = [f"{len(batch_failed)} Errores"] if batch_failed else []
-        if batch_retries > 0: problems.append(f"{batch_retries} Reintentos API")
-        if problems: summary_str += f" | ({', '.join(problems)})"
-        print(summary_str)
-
-        if batch_num < total_batches - 1:
-            pause_duration = 2
-            print(f"Pausa {pause_duration}s...")
-            time.sleep(pause_duration)
-
+    passed_count = sum(1 for d in all_stock_data.values() if d['minervini_analysis']['passes_all_filters'])
+    print(f"\n✓ Análisis completado: {passed_count} Stage 2 encontradas | {len(all_failed)} errores.")
     return all_stock_data, all_failed
 
 def _generate_final_report(screener, all_stock_data, all_failed):
