@@ -31,7 +31,7 @@ Sistema automatizado basado en la **metodología SEPA de Mark Minervini** que an
 3. **Institutional Evidence (Híbrido)** - Sistema de 8 criterios:
    - ✅ Acumulación por volumen/precio (0-2 pts)
    - ✅ Market cap óptimo $500M-$50B (0-2 pts) 
-   - ✅ Float institucional >40% locked up (0-2 pts)
+   - ✅ Propiedad institucional real (`heldPercentInstitutions`): ≥60%=2pts, ≥30%=1pt (0-2 pts)
    - ✅ Liquidez diaria >$5M volume (0-1 pt)
    - ✅ Shares outstanding <100M (0-1 pt)
    - 📊 **Requiere 5/8 puntos para pasar**
@@ -111,12 +111,12 @@ market_cap_range = $500M - $50B    # 2 puntos
 market_cap_minimum = $100M         # 1 punto
 ```
 
-**3. Float Institucional (0-2 puntos)**
+**3. Propiedad Institucional Real (0-2 puntos)**
 ```python
-# Cálculo de ownership institucional
-institutional_ratio = 1 - (float_shares / shares_outstanding)
-high_institutional = >60% locked up  # 2 puntos  
-moderate_institutional = >40%        # 1 punto
+# Dato directo de yfinance: % del float en manos de fondos e instituciones
+inst_pct = ticker_info.get('heldPercentInstitutions')
+high_institutional   = inst_pct >= 0.60  # 2 puntos
+moderate_institutional = inst_pct >= 0.30  # 1 punto
 ```
 
 **4. Liquidez Institucional (0-1 punto)**
@@ -229,12 +229,15 @@ python create_dashboard_data.py
   - VCP detected = +3, Institutional accumulation = +3
   - Earnings acceleration = +2, ROE strong = +2
 
-**Bonificaciones y Penalizaciones Adicionales:**
+**Multiplicadores por señal de entrada:**
 
-El sistema de scoring incluye ajustes dinámicos para refinar la puntuación final:
--   **Penalización por Extensión (-20% del score)**: Si una acción está "extendida" (demasiado alejada de sus medias móviles de corto plazo), su score se reduce para desincentivar la compra en picos.
--   **Penalización por Fallo Fundamental (-40% del score)**: Si una acción pasa los filtros técnicos pero falla en un criterio fundamental clave (ej. crecimiento de beneficios), su score se reduce significativamente.
--   **Bonificación por Entrada Accionable (+10 puntos)**: Si se detecta un punto de entrada de bajo riesgo (como un "Pivot Point" o un rebote en una media móvil clave), la acción recibe una bonificación de 10 puntos.
+La puntuación base se multiplica en función de la calidad de la señal de entrada detectada:
+- **Pivot Point**: ×1.15 (señal de máxima calidad)
+- **VCP Setup**: ×1.10 (setup en formación)
+- **MA-Bounce-50**: ×1.07 (rebote en MA50)
+- **MA-Bounce-21**: ×1.05 (rebote en MA21)
+- **Consolidando**: ×1.00 (sin señal clara)
+- **Extendido**: ×0.80 (penalización por sobreextensión)
 
 **Clasificación de Inversión:**
 - **90-100**: Exceptional - Posición máxima permitida

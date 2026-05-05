@@ -43,6 +43,7 @@ class MinerviniStockScreener:
             50: {'uptrend_days': 20, 'touch_days': 10, 'touch_proximity': 0.03, 'bounce_limit': 0.07},
             21: {'uptrend_days': 10, 'touch_days': 5, 'touch_proximity': 0.02, 'bounce_limit': 0.05}
         }
+        self.symbol_industries = {}
         self.session = requests.Session()
 
     def get_nyse_nasdaq_symbols(self):
@@ -82,8 +83,15 @@ class MinerviniStockScreener:
                     rows = data['data']['table']['rows']
                     # La API ya no devuelve 'assetType', asumimos que todos son stocks.
                     # El filtro secundario en main() limpiará los tickers no deseados.
-                    symbols = [row['symbol'] for row in rows]
-                    
+                    symbols = []
+                    for row in rows:
+                        sym = row['symbol']
+                        symbols.append(sym)
+                        self.symbol_industries[sym] = {
+                            'industry': row.get('industry', 'Unknown') or 'Unknown',
+                            'sector': row.get('sector', 'Unknown') or 'Unknown'
+                        }
+
                     print(f"  Obtenidos {len(symbols)} símbolos de {exchange}.")
                     return symbols
             
@@ -200,11 +208,18 @@ class MinerviniStockScreener:
             if is_in_tight_range: details.append("Rango estrecho (<3% en 5d)")
             if is_in_pivot: details.append("✅ SEÑAL PIVOTE ACTIVA")
 
+            # 5. VOLUMEN EN EL BREAKOUT: Solo aplica cuando está en el pivote
+            current_volume = df['Volume'].iloc[-1]
+            high_volume_breakout = is_in_pivot and (current_volume >= volume_50d_avg * 1.4)
+            if high_volume_breakout:
+                details.append(f"🔥 VOLUMEN BREAKOUT ({current_volume/volume_50d_avg:.1f}x media)")
+
             return {
                 'vcp_detected': vcp_detected,
                 'volatility_tightening': volatility_tightening,
                 'volume_dry_up': volume_dry_up,
                 'is_in_pivot': is_in_pivot,
+                'high_volume_breakout': high_volume_breakout,
                 'details': details if details else ["Sin señales claras de VCP"]
             }
             
@@ -232,13 +247,13 @@ class MinerviniStockScreener:
             up_days_ratio = up_volume > (down_volume * 1.2) # Volumen de subida es al menos un 20% mayor
 
             # 3. Detección de "Pocket Pivot" (señal institucional clave)
-            # Un "pocket pivot" es un día de subida cuyo volumen es mayor que el volumen del día de bajada más alto de los últimos 10 días.
-            # Buscamos esta señal en los últimos 5 días para confirmar un interés institucional reciente.
-            last_10_days = df.tail(10)
-            down_day_volumes = last_10_days[last_10_days['Close'] < last_10_days['Open']]['Volume']
+            # Un día alcista (últimos 5d) cuyo volumen supera el máximo de los días bajistas
+            # de los 10 días ANTERIORES (no solapados) a esos 5 días.
+            prior_10_days = df.iloc[-15:-5] if len(df) >= 15 else df.iloc[:-5]
+            down_day_volumes = prior_10_days[prior_10_days['Close'] < prior_10_days['Open']]['Volume']
             max_down_volume = down_day_volumes.max() if not down_day_volumes.empty else 0
-            
-            last_5_days = last_10_days.tail(5)
+
+            last_5_days = df.tail(5)
             up_days_last_5 = last_5_days[last_5_days['Close'] > last_5_days['Open']]
             has_pocket_pivot = (up_days_last_5['Volume'] > max_down_volume).any() if not up_days_last_5.empty else False
 
@@ -282,22 +297,22 @@ class MinerviniStockScreener:
             else:
                 evidence_details.append("Market cap data unavailable")
             
-            # 3. ANÁLISIS DE FLOAT INSTITUCIONAL (0-2 puntos)
+            # 3. PROPIEDAD INSTITUCIONAL REAL (0-2 puntos)
+            # heldPercentInstitutions = % del float en manos de fondos/instituciones (dato directo de yfinance)
+            inst_pct = ticker_info.get('heldPercentInstitutions', 0) if ticker_info else 0
             shares_outstanding = ticker_info.get('sharesOutstanding', 0) if ticker_info else 0
-            float_shares = ticker_info.get('floatShares', 0) if ticker_info else 0
-            
-            if shares_outstanding > 0 and float_shares > 0:
-                institutional_ratio = 1 - (float_shares / shares_outstanding)
-                if institutional_ratio > 0.6:  # >60% locked up
+
+            if inst_pct and inst_pct > 0:
+                if inst_pct >= 0.60:  # >60% del float en manos institucionales
                     evidence_score += 2
-                    evidence_details.append(f"High institutional ownership: {institutional_ratio*100:.1f}%")
-                elif institutional_ratio > 0.4:  # >40% locked up
+                    evidence_details.append(f"High institutional ownership: {inst_pct*100:.1f}%")
+                elif inst_pct >= 0.30:  # >30% del float en manos institucionales
                     evidence_score += 1
-                    evidence_details.append(f"Moderate institutional ownership: {institutional_ratio*100:.1f}%")
+                    evidence_details.append(f"Moderate institutional ownership: {inst_pct*100:.1f}%")
                 else:
-                    evidence_details.append(f"Low institutional ownership: {institutional_ratio*100:.1f}%")
+                    evidence_details.append(f"Low institutional ownership: {inst_pct*100:.1f}%")
             else:
-                evidence_details.append("Float/shares outstanding data unavailable")
+                evidence_details.append("Institutional ownership data unavailable")
             
             # 4. LIQUIDEZ INSTITUCIONAL (0-1 punto)
             current_price = df['Close'].iloc[-1] if not df.empty else 0
@@ -357,56 +372,74 @@ class MinerviniStockScreener:
     
     def calculate_minervini_score(self, analysis):
         """
-        Calcula un score Minervini (0-100) rediseñado para una mejor diferenciación y priorización de entradas.
-        Utiliza un sistema de multiplicadores para las señales de entrada.
+        Calcula un score Minervini (0-100) alineado con la metodología SEPA.
+        Desglose: Stage(40) + RS(30) + Posición 52w(20) + Patrones/Fundamentales(10).
+        Multiplicador final por señal de entrada (0.8 – 1.15).
         """
         try:
             base_score = 0
-            
-            # 1. TENDENCIA Y ESTRUCTURA (Máx 35 puntos)
+
+            # 1. TENDENCIA Y ESTRUCTURA (Máx 40 puntos)
             stage = analysis.get('stage_analysis', '')
             if 'Stage 2' in stage:
-                base_score += 35
+                base_score += 40
             elif 'Stage 1' in stage or 'Stage 3' in stage:
-                base_score += 15
-            
-            # 2. FUERZA RELATIVA (Máx 25 puntos)
+                base_score += 20
+
+            # 2. FUERZA RELATIVA (Máx 30 puntos + 5 pts RS Line en nuevos máximos)
             rs_rating = analysis.get('rs_rating', 0)
             if rs_rating:
-                base_score += (rs_rating / 100) * 25
-            
-            # 3. PATRÓN DE PRECIO (Máx 20 puntos) - Usa directamente el pattern_score
-            pattern_score = analysis.get('pattern_score', 0)
-            # El score máximo de patrón es 12 (Pivot+Acum). Lo escalamos a 20 puntos.
-            base_score += (pattern_score / 12) * 20
+                base_score += (rs_rating / 100) * 30
+            if analysis.get('rs_line_new_high', False):
+                base_score += 5  # RS Line en o cerca de nuevos máximos de 52 semanas
 
-            # 4. PROXIMIDAD AL MÁXIMO (Máx 10 puntos) - Recompensa estar muy cerca del máximo
+            # 3. POSICIÓN 52W (Máx 20 puntos: 10 proximidad al máximo + 10 distancia al mínimo)
             dist_from_high = analysis.get('distance_to_52w_high', 100)
             if dist_from_high is not None:
-                # Puntuación logarítmica inversa: más puntos cuanto más cerca de 0.
                 proximity_score = 10 * (1 - (dist_from_high / self.MAX_PCT_BELOW_HIGH))
                 base_score += max(0, proximity_score)
 
-            # 5. BONIFICACIÓN FUNDAMENTAL (Máx 10 puntos)
-            if analysis.get('earnings_acceleration', False):
-                base_score += 5
-            if analysis.get('roe_strong', False):
-                base_score += 5
+            dist_from_low = analysis.get('distance_from_52w_low', 0)
+            if dist_from_low is not None:
+                # 0 pts cerca del mínimo del umbral, 10 pts al 100%+ sobre mínimo
+                base_score += min(10 * (dist_from_low / 100.0), 10)
 
-            # 6. MULTIPLICADOR DE SEÑAL DE ENTRADA (El factor decisivo)
+            # 3.5. RANKING DE INDUSTRIA
+            industry_rank = analysis.get('industry_rank')
+            if industry_rank is not None:
+                if industry_rank >= 80:
+                    base_score += 5  # Industria líder
+                elif industry_rank >= 60:
+                    base_score += 2  # Industria fuerte
+
+            # 4. PATRONES TÉCNICOS Y FUNDAMENTALES (Máx 10 puntos)
+            # VCP=3, Acumulación institucional=3, Aceleración beneficios=2, ROE fuerte=2
+            if analysis.get('vcp_detected', False):
+                base_score += 3
+            if analysis.get('institutional_accumulation', False):
+                base_score += 3
+            if analysis.get('earnings_acceleration', False):
+                base_score += 2
+                if analysis.get('accel_quarters', 0) >= 3:
+                    base_score += 1  # Bonus por aceleración persistente (3+ trimestres)
+            if analysis.get('roe_strong', False):
+                base_score += 2
+
+            # 5. MULTIPLICADOR DE SEÑAL DE ENTRADA
             entry_signal = analysis.get('entry_signal', 'Consolidando')
             multipliers = {
-                'Pivot Point': 1.15,  # Señal de máxima calidad
-                'VCP Setup': 1.10,    # Setup de alta calidad, casi listo
-                'MA-Bounce-50': 1.07, # Buen punto de entrada secundario
-                'MA-Bounce-21': 1.05, # Buen punto de entrada, más agresivo
-                'Consolidando': 1.0,  # Neutral, sin señal clara
-                'Extendido': 0.8      # Penalización por estar extendido
+                'Pivot Breakout': 1.20,  # Breakout confirmado con volumen institucional
+                'Pivot Point': 1.15,
+                'VCP Setup': 1.10,
+                'MA-Bounce-50': 1.07,
+                'MA-Bounce-21': 1.05,
+                'Consolidando': 1.0,
+                'Extendido': 0.8
             }
             final_score = base_score * multipliers.get(entry_signal, 1.0)
-                
+
             return min(round(final_score, 1), 100)
-            
+
         except Exception as e:
             print(f"Error calculando Minervini Score: {e}")
             return 0
@@ -485,44 +518,61 @@ class MinerviniStockScreener:
         return True, "", pattern_score, institutional_accumulation
 
     def _check_fundamental_health(self, ticker_info):
-        """Filtros 0, 6 y 7: Valida la salud fundamental (beneficios, crecimiento, ROE)."""
+        """Filtros 0, 6 y 7: Valida la salud fundamental (beneficios, crecimiento, ROE).
+        Devuelve (passed, reason, earnings_acceleration, roe_strong, multi_quarter_accel, accel_quarters)."""
         if not ticker_info:
-            return False, "Datos fundamentales no disponibles", False, False
+            return False, "Datos fundamentales no disponibles", False, False, None, 0
 
-        # Filtro 0: Beneficios positivos
+        # Filtro 0: Beneficios positivos (obligatorio; None también falla — dato no disponible es inaceptable)
         net_income = ticker_info.get('netIncomeToCommon')
-        if net_income is not None and net_income <= 0: # Este es un filtro crítico
-            return False, f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)", False, False
+        if net_income is None:
+            return False, "Net income no disponible", False, False, None, 0
+        if net_income <= 0:
+            return False, f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)", False, False, None, 0
 
         # Filtro 6: Crecimiento de beneficios
         earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
         if earnings_growth is None:
-            return False, "Dato de Earnings Growth no disponible", False, False
+            return False, "Dato de Earnings Growth no disponible", False, False, None, 0
         if earnings_growth < self.MIN_EARNINGS_GROWTH:
-            return False, f"Earnings growth < {self.MIN_EARNINGS_GROWTH:.0%} YoY", False, False
-        
-        earnings_acceleration = earnings_growth > 0.3
+            return False, f"Earnings growth < {self.MIN_EARNINGS_GROWTH:.0%} YoY", False, False, None, 0
+
+        # Aceleración multi-trimestre
+        multi_quarter_accel, growth_rates = _compute_quarterly_earnings_growth(ticker_info)
+        # Contar trimestres consecutivos con growth >= 0.25
+        accel_quarters = 0
+        for g in growth_rates:
+            if g >= 0.25:
+                accel_quarters += 1
+            else:
+                break
+
+        # earnings_acceleration: usa multi-trimestre si disponible, sino fallback a single-quarter
+        if multi_quarter_accel is not None:
+            earnings_acceleration = multi_quarter_accel
+        else:
+            earnings_acceleration = earnings_growth > 0.3
 
         # Filtro 7: Crecimiento de ingresos y ROE (Lógica Inteligente)
         roe = ticker_info.get('returnOnEquity')
         if not (roe is not None and roe >= self.MIN_ROE):
-            return False, f"ROE < {self.MIN_ROE:.0%} o no disponible", earnings_acceleration, False
-        
+            return False, f"ROE < {self.MIN_ROE:.0%} o no disponible", earnings_acceleration, False, multi_quarter_accel, accel_quarters
+
         has_strong_roe = True # Si llega aquí, el ROE es fuerte
 
         revenue_growth = ticker_info.get('revenueGrowth')
 
         # Escenario 1: Crecimiento clásico (buenos ingresos)
         if revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH:
-            return True, "", earnings_acceleration, has_strong_roe
+            return True, "", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
 
         # Escenario 2: "Central de productividad" (beneficios excepcionales compensan ingresos más bajos)
         if earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and \
            revenue_growth is not None and revenue_growth >= self.DECENT_REVENUE_GROWTH:
-            return True, "", earnings_acceleration, has_strong_roe
-        
+            return True, "", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
+
         # Si no cumple ninguno de los dos escenarios, falla.
-        return False, "Crecimiento de ingresos/beneficios insuficiente", earnings_acceleration, has_strong_roe
+        return False, "Crecimiento de ingresos/beneficios insuficiente", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
 
     def _check_ma_bounce(self, df, current_price, ma_period, uptrend_days, touch_days, touch_proximity, bounce_limit):
         """
@@ -551,7 +601,7 @@ class MinerviniStockScreener:
         # 3. El precio debe estar rebotando ahora, pero no demasiado extendido
         return current_price > ma_value and ((current_price - ma_value) / ma_value) < bounce_limit
 
-    def get_minervini_analysis(self, df, rs_rating, symbol, cache_manager, session, debug_mode=False):
+    def get_minervini_analysis(self, df, rs_rating, symbol, cache_manager, session, debug_mode=False, spy_df=None, industry_rank=None):
         """Análisis completo y optimizado con 'early exit' según metodología SEPA de Minervini"""
         try:
             # --- GUARDIA INICIAL: DATOS INSUFICIENTES ---
@@ -574,7 +624,11 @@ class MinerviniStockScreener:
             ma_200 = latest['MA_200']
             high_52w, low_52w = self.calculate_52_week_range(df)
             volume_50d_avg = df['Volume'].tail(50).mean()
-            
+
+            # --- RS LINE EN NUEVOS MÁXIMOS ---
+            rs_line_signal = self.calculate_rs_line_signal(df, spy_df)
+            rs_line_new_high = rs_line_signal['rs_line_new_high']
+
             # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE Y EL DASHBOARD) ---
             price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
             price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
@@ -610,7 +664,7 @@ class MinerviniStockScreener:
                 return self._build_rejection_result(stage_analysis, "Datos fundamentales (.info) no disponibles", rs_rating, debug_mode, "Fundamentales"), had_to_retry
 
             # FILTRO 8: SALUD FUNDAMENTAL (CRECIMIENTO Y RENTABILIDAD)
-            passed, reason, earnings_acceleration, roe_strong = self._check_fundamental_health(ticker_info)
+            passed, reason, earnings_acceleration, roe_strong, multi_quarter_accel, accel_quarters = self._check_fundamental_health(ticker_info)
             if not passed:
                 return self._build_rejection_result(stage_analysis, reason, rs_rating, debug_mode, "Salud Fundamental"), had_to_retry
 
@@ -627,13 +681,16 @@ class MinerviniStockScreener:
             entry_signal = entry_signal_info["signal"]
             is_actionable = entry_signal_info["is_actionable"]
 
-            # CORRECCIÓN CLAVE: Asegurarse de que 'entry_signal' se incluye para el cálculo del score.
             analysis_for_scoring = {
                 'stage_analysis': stage_analysis, 'rs_rating': rs_rating,
                 'distance_to_52w_high': distance_from_high, 'distance_from_52w_low': distance_from_low,
-                'pattern_score': pattern_score, 'vcp_detected': vcp_analysis['vcp_detected'],
+                'vcp_detected': vcp_analysis['vcp_detected'],
+                'institutional_accumulation': institutional_accumulation,
                 'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
                 'earnings_acceleration': earnings_acceleration, 'roe_strong': roe_strong,
+                'multi_quarter_accel': multi_quarter_accel, 'accel_quarters': accel_quarters,
+                'rs_line_new_high': rs_line_new_high,
+                'industry_rank': industry_rank,
                 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
                 'entry_signal': entry_signal
             }
@@ -668,6 +725,10 @@ class MinerviniStockScreener:
                 'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None,
                 'earnings_acceleration': earnings_acceleration,
                 'roe_strong': roe_strong,
+                'multi_quarter_accel': multi_quarter_accel,
+                'accel_quarters': accel_quarters,
+                'rs_line_new_high': rs_line_new_high,
+                'industry_rank': industry_rank,
                 # Añadir información de la compañía para su uso posterior
                 'company_name': ticker_info.get('longName', symbol),
                 'sector': ticker_info.get('sector', 'N/A'),
@@ -680,6 +741,72 @@ class MinerviniStockScreener:
             print(f"Error en análisis Minervini para {symbol}: {e}")
             return self._build_rejection_result('Error', f'Error de cálculo: {e}', rs_rating, debug_mode, "Error Interno"), False
 
+    def rank_industries_by_rs(self, rs_ratings):
+        """
+        Agrupa los símbolos por industria y calcula la mediana de RS Rating por grupo.
+        Solo incluye industrias con >= 3 símbolos. Convierte a percentil 0-100.
+        Devuelve dict {industry_name: percentile_rank}.
+        """
+        try:
+            industry_rs = {}
+            for symbol, score in rs_ratings.items():
+                industry = self.symbol_industries.get(symbol, {}).get('industry', 'Unknown')
+                if industry not in industry_rs:
+                    industry_rs[industry] = []
+                industry_rs[industry].append(score)
+
+            # Calcular mediana por industria, solo si tiene >= 3 símbolos
+            industry_medians = {}
+            for industry, scores in industry_rs.items():
+                if len(scores) >= 3:
+                    industry_medians[industry] = pd.Series(scores).median()
+
+            if not industry_medians:
+                return {}
+
+            medians_series = pd.Series(industry_medians)
+            percentile_ranks = (medians_series.rank(pct=True) * 100).round(1)
+            return percentile_ranks.to_dict()
+
+        except Exception as e:
+            print(f"Error en rank_industries_by_rs: {e}")
+            return {}
+
+    def calculate_rs_line_signal(self, df, spy_df):
+        """
+        Calcula la RS Line (precio acción / precio S&P500) y determina si está
+        cerca de nuevos máximos de 52 semanas (señal de liderazgo).
+        Devuelve dict {'rs_line_new_high': bool, 'rs_line_pct_from_high': float|None}.
+        """
+        try:
+            if spy_df is None or spy_df.empty:
+                return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+
+            # Alinear por fechas comunes
+            common_dates = df.index.intersection(spy_df.index)
+            if len(common_dates) < 50:
+                return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+
+            stock_close = df.loc[common_dates, 'Close']
+            spy_close = spy_df.loc[common_dates, 'Close']
+
+            rs_line = stock_close / spy_close
+            rs_line_52w = rs_line.tail(252)
+            rs_line_high_52w = rs_line_52w.max()
+            rs_line_current = rs_line.iloc[-1]
+
+            if rs_line_high_52w and rs_line_high_52w > 0:
+                pct_from_high = ((rs_line_high_52w - rs_line_current) / rs_line_high_52w) * 100
+                rs_line_new_high = pct_from_high <= 5.0  # Dentro del 5% del máximo
+            else:
+                pct_from_high = None
+                rs_line_new_high = False
+
+            return {'rs_line_new_high': rs_line_new_high, 'rs_line_pct_from_high': round(pct_from_high, 2) if pct_from_high is not None else None}
+
+        except Exception:
+            return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+
     def get_entry_signal(self, df, vcp_analysis, is_extended):
         """
         Determina la mejor señal de entrada analizando múltiples patrones.
@@ -687,6 +814,13 @@ class MinerviniStockScreener:
         """
         # Prioridad 1: Pivote VCP (la señal de más bajo riesgo)
         if vcp_analysis.get('is_in_pivot', False):
+            if vcp_analysis.get('high_volume_breakout', False):
+                return {
+                    "signal": "Pivot Breakout",
+                    "text": "¡BREAKOUT con Volumen! (Entrada Ideal)",
+                    "css_class": "pivot-breakout",
+                    "is_actionable": True
+                }
             return {
                 "signal": "Pivot Point",
                 "text": "Punto Pivote (¡Listo!)",
@@ -734,7 +868,7 @@ class MinerviniStockScreener:
             "is_actionable": False
         }
     
-    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, cache_manager):
+    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, cache_manager, spy_df=None, industry_ranks=None):
         """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
         stock_data = {}
         failed_symbols = []
@@ -756,10 +890,14 @@ class MinerviniStockScreener:
                         hist_with_ma = self.calculate_moving_averages(hist)
                         
                         stock_rs_rating = rs_ratings.get(symbol)
+                        # Calcular industry_rank para este símbolo
+                        symbol_industry = self.symbol_industries.get(symbol, {}).get('industry', 'Unknown')
+                        stock_industry_rank = industry_ranks.get(symbol_industry) if industry_ranks else None
                         # La obtención de .info se ha movido DENTRO de get_minervini_analysis
                         # para que solo se ejecute en acciones que pasan los filtros técnicos.
                         minervini_analysis, had_info_retry = self.get_minervini_analysis(
-                            hist_with_ma, stock_rs_rating, symbol, cache_manager, self.session, debug_mode=False
+                            hist_with_ma, stock_rs_rating, symbol, cache_manager, self.session,
+                            debug_mode=False, spy_df=spy_df, industry_rank=stock_industry_rank
                         )
 
                         if had_info_retry:
@@ -832,13 +970,13 @@ class MinerviniStockScreener:
                     continue
 
                 current_price = df['Close'].iloc[-1]
-                p3 = ((current_price / df['Close'].iloc[-63]) - 1) * 100 if len(df) >= 63 else 0
-                p6 = ((current_price / df['Close'].iloc[-126]) - 1) * 100 if len(df) >= 126 else 0
-                p9 = ((current_price / df['Close'].iloc[-189]) - 1) * 100 if len(df) >= 189 else 0
-                p12 = ((current_price / df['Close'].iloc[-252]) - 1) * 100
-                
-                # Fórmula IBD: RS = 40% × P3 + 20% × P6 + 20% × P9 + 20% × P12
-                rs_score = (0.4 * p3) + (0.2 * p6) + (0.2 * p9) + (0.2 * p12)
+                # Fórmula IBD con trimestres NO solapados: cada período es independiente.
+                # p3 = últimos 3 meses; p_q2/q3/q4 = trimestres anteriores individuales.
+                p3   = ((current_price / df['Close'].iloc[-63]) - 1) * 100 if len(df) >= 63 else 0
+                p_q2 = ((df['Close'].iloc[-63] / df['Close'].iloc[-126]) - 1) * 100 if len(df) >= 126 else 0
+                p_q3 = ((df['Close'].iloc[-126] / df['Close'].iloc[-189]) - 1) * 100 if len(df) >= 189 else 0
+                p_q4 = ((df['Close'].iloc[-189] / df['Close'].iloc[-252]) - 1) * 100
+                rs_score = (0.4 * p3) + (0.2 * p_q2) + (0.2 * p_q3) + (0.2 * p_q4)
                 rs_scores[symbol] = rs_score
             except Exception:
                 continue # Ignorar errores en acciones individuales
@@ -895,6 +1033,18 @@ class MinerviniStockScreener:
                 print(f"  ❌ Lote {i+1} falló después de {max_retries} reintentos. Omitiendo este lote.")
             
         print(f"\n✓ Descarga masiva completada. Total de datos obtenidos para {len(all_data)} símbolos.")
+
+        print("Descargando datos del índice de referencia (^GSPC)...")
+        try:
+            spy_data = yf.download('^GSPC', period=period, auto_adjust=True, progress=False, threads=False, timeout=30)
+            if not spy_data.empty:
+                all_data['_MARKET_INDEX'] = spy_data
+                print("✓ Índice ^GSPC descargado correctamente.")
+            else:
+                print("⚠️ No se obtuvieron datos del índice ^GSPC.")
+        except Exception as e:
+            print(f"⚠️ Error descargando ^GSPC (RS Line desactivada): {e}")
+
         return all_data
     
     def save_minervini_data(self, stock_data, filename_prefix="minervini_sepa_analysis"):
@@ -932,6 +1082,10 @@ class MinerviniStockScreener:
                     'Volume_50d_Avg': analysis.get('volume_50d_avg'),
                     'Earnings_Acceleration': analysis.get('earnings_acceleration'),
                     'ROE_Strong': analysis.get('roe_strong'),
+                    'RS_Line_New_High': analysis.get('rs_line_new_high'),
+                    'Industry_Rank': analysis.get('industry_rank'),
+                    'Multi_Quarter_Accel': analysis.get('multi_quarter_accel'),
+                    'Accel_Quarters': analysis.get('accel_quarters'),
                     'Stage_Analysis': analysis.get('stage_analysis'),
                     'Passes_Technical': analysis.get('passes_minervini_technical'),
                     'Entry_Signal': analysis.get('entry_signal'),
@@ -1047,7 +1201,8 @@ class TickerInfoCacheManager:
         else:
             print("\nℹ️ No hubo actualizaciones en el caché de .info, no se guarda nada.")
 
-    def _extract_earnings_date(self, calendar_data):
+    @staticmethod
+    def _extract_earnings_date(calendar_data):
         """Extrae y formatea la próxima fecha de beneficios del diccionario de calendario."""
         if not calendar_data or 'Earnings Date' not in calendar_data:
             return None
@@ -1059,6 +1214,25 @@ class TickerInfoCacheManager:
         except (TypeError, IndexError, AttributeError):
             # Si el formato es inesperado, devuelve None
             return None
+
+def _compute_quarterly_earnings_growth(ticker_info_dict):
+    """
+    Lee '_quarterly_raw_growth' del dict (lista de floats, más reciente primero)
+    y devuelve (multi_quarter_accel: bool|None, growth_rates: list).
+    multi_quarter_accel es True si los últimos 2 trimestres tienen YoY growth >= 0.25
+    Y el más reciente supera al anterior (aceleración real).
+    Devuelve None si hay menos de 2 tasas disponibles.
+    """
+    min_growth = 0.25
+    growth_rates = ticker_info_dict.get('_quarterly_raw_growth', [])
+    if not growth_rates or len(growth_rates) < 2:
+        return None, growth_rates
+    # Más reciente es índice 0
+    recent = growth_rates[0]
+    prior = growth_rates[1]
+    multi_quarter_accel = (recent >= min_growth) and (prior >= min_growth) and (recent > prior)
+    return multi_quarter_accel, growth_rates
+
 
 def fetch_info_for_symbol(symbol, cache_manager, session=None, max_retries=3):
     """
@@ -1085,6 +1259,25 @@ def fetch_info_for_symbol(symbol, cache_manager, session=None, max_retries=3):
                 calendar_data = None
             
             if ticker_info and 'symbol' in ticker_info:
+                try:
+                    q_stmt = ticker.quarterly_income_stmt
+                    if q_stmt is not None and not q_stmt.empty:
+                        eps_row = None
+                        for label in ['Net Income', 'Diluted EPS', 'Basic EPS']:
+                            if label in q_stmt.index:
+                                eps_row = q_stmt.loc[label].dropna().sort_index(ascending=False)
+                                break
+                        if eps_row is not None and len(eps_row) >= 5:
+                            growth_rates = []
+                            vals = eps_row.values
+                            for i in range(min(3, len(vals) - 4)):
+                                curr, prior = vals[i], vals[i + 4]
+                                if pd.notna(curr) and pd.notna(prior) and prior != 0:
+                                    growth_rates.append(round((curr - prior) / abs(prior), 4))
+                            if growth_rates:
+                                ticker_info['_quarterly_raw_growth'] = growth_rates
+                except Exception:
+                    pass
                 cache_manager.set(symbol, ticker_info, calendar_data)
                 # Si tuvo éxito pero no en el primer intento, fue un reintento exitoso.
                 return ticker_info, attempt > 0
@@ -1141,11 +1334,19 @@ def _run_analysis_pipeline(screener, cache_manager):
     symbols_to_process = all_symbols
     all_historical_data = screener.download_all_data(symbols_to_process)
 
+    # Extraer el índice de mercado antes de calcular RS (no debe contaminar el cálculo)
+    spy_df = all_historical_data.pop('_MARKET_INDEX', None)
+
     # PASO 2: Calcular scores de rendimiento
     rs_scores = screener.calculate_all_rs_scores(all_historical_data)
 
     # PASO 3: Calcular RS Ratings finales (percentiles)
     rs_ratings = screener.calculate_rs_ratings_from_scores(rs_scores)
+
+    # PASO 3.5: Ranking de grupos industriales
+    print("\nCalculando ranking de grupos industriales...")
+    industry_ranks = screener.rank_industries_by_rs(rs_ratings)
+    print(f"✓ {len(industry_ranks)} grupos industriales rankeados.")
 
     # PASO 4: Análisis Minervini completo usando los RS Ratings pre-calculados
     batch_size = 30
@@ -1162,7 +1363,7 @@ def _run_analysis_pipeline(screener, cache_manager):
         end_idx = min(start_idx + batch_size, len(symbols_to_process))
         batch_symbols = symbols_to_process[start_idx:end_idx]
 
-        batch_data, batch_failed, batch_retries = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager)
+        batch_data, batch_failed, batch_retries = screener.process_stocks_with_minervini(batch_symbols, all_historical_data, rs_ratings, cache_manager, spy_df=spy_df, industry_ranks=industry_ranks)
 
         all_stock_data.update(batch_data)
         all_failed.extend(batch_failed)
