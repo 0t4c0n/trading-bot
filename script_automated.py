@@ -21,9 +21,7 @@ class MinerviniStockScreener:
         self.MIN_ROE = 0.17             # Retorno sobre el patrimonio (ROE) >= 17%
         # --- CONSTANTES PARA EXCEPCIÓN DE LÍDERES DE MERCADO ---
         # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
-        # Se reduce a 4 para permitir que acciones con solo "Acumulación Institucional" (4 pts) pasen,
-        # haciendo el filtro un poco menos restrictivo pero aún selectivo.
-        self.MIN_PATTERN_SCORE = 4 # Puntuación mínima requerida en el análisis de patrones (VCP/Acumulación)
+        # VCP y acumulación solo afectan al score, no filtran. Se revisan manualmente en los gráficos.
         self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
         self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
         # --- CONSTANTES PARA FILTRO DE CRECIMIENTO INTELIGENTE ---
@@ -121,13 +119,13 @@ class MinerviniStockScreener:
             'NVDA', 'ADBE', 'PYPL', 'INTC', 'CSCO', 'AVGO', 'TXN', 'QCOM',
             'INTU', 'ISRG', 'FISV', 'ADP', 'BIIB', 'ILMN', 'MRNA', 'ZM', 'DOCU',
             'SNOW', 'PLTR', 'RBLX', 'U', 'TWLO', 'OKTA', 'DDOG', 'CRWD',
-            'GILD', 'REGN', 'VRTX', 'BMRN', 'ALXN', 'CELG', 'BIIB', 'AMGN',
+            'GILD', 'REGN', 'VRTX', 'BMRN', 'AMGN',
             'BKNG', 'EBAY', 'SBUX', 'ROST', 'ULTA', 'LULU', 'NTES', 'JD',
             'BABA', 'PDD', 'MELI', 'SE', 'SHOP', 'SQ', 'ROKU', 'SPOT',
-            'NVDA', 'AMD', 'INTC', 'QCOM', 'AVGO', 'TXN', 'ADI', 'KLAC', 'LRCX',
-            'AMAT', 'MU', 'MRVL', 'SWKS', 'MCHP', 'XLNX', 'NXPI', 'TSM',
-            'NFLX', 'ROKU', 'SPOT', 'UBER', 'LYFT', 'DASH', 'ABNB', 'ZOOM',
-            'TDOC', 'PTON', 'PINS', 'SNAP', 'TWTR', 'FB', 'WORK'
+            'AMD', 'ADI', 'KLAC', 'LRCX',
+            'AMAT', 'MU', 'MRVL', 'SWKS', 'MCHP', 'NXPI', 'TSM',
+            'UBER', 'LYFT', 'DASH', 'ABNB',
+            'TDOC', 'PTON', 'PINS', 'SNAP'
         ]
         
         all_backup = list(set(nyse_major + nasdaq_major))
@@ -298,20 +296,22 @@ class MinerviniStockScreener:
             
             # 3. PROPIEDAD INSTITUCIONAL REAL (0-2 puntos)
             # heldPercentInstitutions = % del float en manos de fondos/instituciones (dato directo de yfinance)
-            inst_pct = ticker_info.get('heldPercentInstitutions', 0) if ticker_info else 0
+            # Nota: yfinance devuelve None cuando el dato no está disponible, distinto de 0% real.
+            inst_pct = ticker_info.get('heldPercentInstitutions') if ticker_info else None
             shares_outstanding = ticker_info.get('sharesOutstanding', 0) if ticker_info else 0
 
-            if inst_pct and inst_pct > 0:
-                if inst_pct >= 0.60:  # >60% del float en manos institucionales
-                    evidence_score += 2
-                    evidence_details.append(f"High institutional ownership: {inst_pct*100:.1f}%")
-                elif inst_pct >= 0.30:  # >30% del float en manos institucionales
-                    evidence_score += 1
-                    evidence_details.append(f"Moderate institutional ownership: {inst_pct*100:.1f}%")
-                else:
-                    evidence_details.append(f"Low institutional ownership: {inst_pct*100:.1f}%")
+            if inst_pct is None:
+                # Dato no disponible: puntuación neutral (1 pto) — no penalizar por ausencia de dato
+                evidence_score += 1
+                evidence_details.append("Institutional ownership data unavailable (neutral)")
+            elif inst_pct >= 0.60:
+                evidence_score += 2
+                evidence_details.append(f"High institutional ownership: {inst_pct*100:.1f}%")
+            elif inst_pct >= 0.30:
+                evidence_score += 1
+                evidence_details.append(f"Moderate institutional ownership: {inst_pct*100:.1f}%")
             else:
-                evidence_details.append("Institutional ownership data unavailable")
+                evidence_details.append(f"Low institutional ownership: {inst_pct*100:.1f}%")
             
             # 4. LIQUIDEZ INSTITUCIONAL (0-1 punto)
             current_price = df['Close'].iloc[-1] if not df.empty else 0
@@ -332,8 +332,8 @@ class MinerviniStockScreener:
                 else:
                     evidence_details.append(f"High share count: {shares_outstanding/1_000_000:.0f}M shares")
             
-            # SCORING FINAL: Require 5/8 puntos para pasar el filtro
-            passes_institutional = evidence_score >= 5
+            # SCORING FINAL: Require 4/8 puntos para pasar el filtro
+            passes_institutional = evidence_score >= 4
             
             return passes_institutional, evidence_score, evidence_details
             
@@ -382,8 +382,9 @@ class MinerviniStockScreener:
             stage = analysis.get('stage_analysis', '')
             if 'Stage 2' in stage:
                 base_score += 40
-            elif 'Stage 1' in stage or 'Stage 3' in stage:
+            elif 'Stage 1' in stage:
                 base_score += 20
+            # Stage 3 (distribución/techo) = 0 puntos — Minervini la evita explícitamente
 
             # 2. FUERZA RELATIVA (Máx 30 puntos + 5 pts RS Line en nuevos máximos)
             rs_rating = analysis.get('rs_rating', 0)
@@ -507,13 +508,9 @@ class MinerviniStockScreener:
         return True, "", distance_from_low, distance_from_high
 
     def _check_price_volume_pattern(self, df, vcp_analysis, volume_50d_avg):
-        """Filtro 5: Valida si existe un patrón de precio/volumen constructivo."""
+        """Calcula el score de patrón (VCP/acumulación) sin filtrar. Solo afecta al score final."""
         institutional_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
         pattern_score, _ = self.get_pattern_score(vcp_analysis, institutional_accumulation)
-        
-        if pattern_score < self.MIN_PATTERN_SCORE:
-            return False, f"Patrón de precio/volumen insuficiente (Score: {pattern_score})", pattern_score, institutional_accumulation
-        
         return True, "", pattern_score, institutional_accumulation
 
     def _check_fundamental_health(self, ticker_info):
@@ -522,17 +519,23 @@ class MinerviniStockScreener:
         if not ticker_info:
             return False, "Datos fundamentales no disponibles", False, False, None, 0
 
-        # Filtro 0: Beneficios positivos (obligatorio; None también falla — dato no disponible es inaceptable)
+        # Filtro 0: Beneficios positivos — con fallback a trailingEps si netIncomeToCommon no está disponible
         net_income = ticker_info.get('netIncomeToCommon')
         if net_income is None:
-            return False, "Net income no disponible", False, False, None, 0
-        if net_income <= 0:
+            trailing_eps = ticker_info.get('trailingEps')
+            shares = ticker_info.get('sharesOutstanding') or 1
+            if trailing_eps is not None:
+                net_income = trailing_eps * shares  # proxy aproximado
+            # Si tampoco hay EPS, se omite el check (el filtro de earnings_growth lo cubre)
+        if net_income is not None and net_income <= 0:
             return False, f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)", False, False, None, 0
 
-        # Filtro 6: Crecimiento de beneficios
+        # Filtro 6: Crecimiento de beneficios — fallback trimestral → anual
         earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
         if earnings_growth is None:
-            return False, "Dato de Earnings Growth no disponible", False, False, None, 0
+            earnings_growth = ticker_info.get('earningsGrowth')  # dato anual como fallback
+        if earnings_growth is None:
+            return False, "Dato de Earnings Growth no disponible (ni trimestral ni anual)", False, False, None, 0
         if earnings_growth < self.MIN_EARNINGS_GROWTH:
             return False, f"Earnings growth < {self.MIN_EARNINGS_GROWTH:.0%} YoY", False, False, None, 0
 
@@ -640,11 +643,9 @@ class MinerviniStockScreener:
             if not (rs_rating is not None and rs_rating >= self.MIN_RS_RATING):
                 return self._build_rejection_result('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING})", rs_rating, debug_mode, "RS Rating"), False
 
-            # --- ANÁLISIS DE PATRONES (VCP) - Se calcula solo si pasa los filtros anteriores ---
+            # --- ANÁLISIS DE PATRONES (VCP/acumulación) — solo afecta al score, no filtra ---
             vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
-
-            passed, reason, pattern_score, institutional_accumulation = self._check_price_volume_pattern(df, vcp_analysis, volume_50d_avg)
-            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Patrón Precio/Volumen"), False
+            _, _, pattern_score, institutional_accumulation = self._check_price_volume_pattern(df, vcp_analysis, volume_50d_avg)
 
             # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
             if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
@@ -1363,7 +1364,7 @@ def _run_analysis_pipeline(screener, cache_manager):
 
     # PASO 4: Análisis Minervini — proceso único sin lotes artificiales
     print(f"Iniciando análisis Minervini SEPA de {len(symbols_to_process)} candidatos...")
-    all_stock_data, all_failed = screener.process_stocks_with_minervini(
+    all_stock_data, all_failed, _ = screener.process_stocks_with_minervini(
         symbols_to_process, all_historical_data, rs_ratings, cache_manager,
         spy_df=spy_df, industry_ranks=industry_ranks
     )
