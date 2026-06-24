@@ -7,7 +7,7 @@ warnings.filterwarnings('ignore')
 from script_automated import WyckoffSpringScreener
 
 # ▼▼▼ ELIGE LA ACCIÓN A ANALIZAR ▼▼▼
-TICKER_TO_DEBUG = "INTC"
+TICKER_TO_DEBUG = "AAPL"
 # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 
@@ -66,10 +66,12 @@ def debug_wyckoff_stock(symbol):
         nearest = sorted(hvn_list, key=lambda h: abs(h - current_price))[:4]
         print(f"  4 HVN más cercanos: {[round(h,2) for h in nearest]}")
 
-    # 5. Soporte estructural
+    # 5. Spring (se detecta primero porque S1 se ancla a él) + Soporte estructural
+    spring_info = screener.detect_spring(hist_df)
+    s1 = spring_info['s1'] if spring_info else screener.find_structural_support(hist_df)
     print(f"\n--- SOPORTE ESTRUCTURAL S1 ({screener.SUPPORT_LOOKBACK} días) ---")
-    s1 = screener.find_structural_support(hist_df)
-    print(f"  S1: ${s1:.2f}  (precio {((current_price-s1)/s1*100):+.1f}% sobre S1)")
+    origen = "anclado al shakeout" if spring_info else "vista actual (sin Spring)"
+    print(f"  S1: ${s1:.2f}  ({origen}) (precio {((current_price-s1)/s1*100):+.1f}% sobre S1)")
 
     # 6. Confluencia
     print(f"\n--- CONFLUENCIA S1 ↔ Volume Profile ---")
@@ -77,30 +79,29 @@ def debug_wyckoff_stock(symbol):
     if conf_valid:
         dist = abs(s1 - nearest_level) / nearest_level * 100
         tipo = "POC" if nearest_level == poc else "HVN"
-        print(f"  ✅ VÁLIDA | Score: {conf_score}/30 | {tipo}: ${nearest_level:.2f} ({dist:.2f}% de distancia)")
+        print(f"  ✅ Confluencia (bonus) | Score: {conf_score}/30 | {tipo}: ${nearest_level:.2f} ({dist:.2f}% de distancia)")
     else:
         if poc:
             dist_poc = abs(s1 - poc) / poc * 100
-            print(f"  ❌ Sin confluencia | POC a {dist_poc:.2f}% de S1 (límite: 1%)")
+            print(f"  ➖ Sin confluencia | POC a {dist_poc:.2f}% de S1 (tol: {screener.S1_CONFLUENCE_TOLERANCE*100:.1f}%)")
         if hvn_list:
             nhvn = min(hvn_list, key=lambda h: abs(h - s1))
-            print(f"  ❌ HVN más cercano a S1: ${nhvn:.2f} ({abs(s1-nhvn)/nhvn*100:.2f}%)")
-        print("  ⛔ Sin confluencia → Spring no aplica según metodología")
+            print(f"  ➖ HVN más cercano a S1: ${nhvn:.2f} ({abs(s1-nhvn)/nhvn*100:.2f}%)")
+        print("  ℹ️  Confluencia es bonus de score, NO bloqueante → el Spring se evalúa igual")
 
-    # 7. Spring
+    # 7. Spring (dos fases: shakeout con volumen + recuperación sobre S1)
     print(f"\n--- SPRING WYCKOFF (Fase C) ---")
-    spring_info = screener.detect_spring(hist_df, s1) if conf_valid else None
     if spring_info:
         print(f"  ✅ SPRING DETECTADO")
-        print(f"     Fecha:     {spring_info['date']}")
-        print(f"     Low:       ${spring_info['low']:.2f}  (S1=${s1:.2f}, -"
+        print(f"     Shakeout:  {spring_info['date']}  (perforación con volumen de clímax)")
+        print(f"     Recuperación: {spring_info.get('recovery_date','?')}  (cierre de nuevo sobre S1)")
+        print(f"     Spring Low:${spring_info['low']:.2f}  (S1=${s1:.2f}, -"
               f"{spring_info['spring_depth_pct']:.3f}%)")
-        print(f"     Close:     ${spring_info['close']:.2f}")
-        print(f"     Cierre:    {spring_info['close_position']*100:.1f}% del rango (≥67% req.)")
-        print(f"     Volumen:   {spring_info['vol_ratio']}× SMA(20) (≥{screener.FILTER_VOLUMEN}× req.)")
-    elif conf_valid:
-        print(f"  ❌ Sin Spring en últimos {screener.SUPPORT_LOOKBACK} días")
-        print(f"     Cond.: Low<${s1:.2f} AND Close>${s1:.2f} AND cierre≥67% AND vol≥{screener.FILTER_VOLUMEN}×SMA20")
+        print(f"     Volumen shakeout: {spring_info['vol_ratio']}× SMA(20) (≥{screener.FILTER_VOLUMEN}× req.)")
+    else:
+        print(f"  ❌ Sin Spring en últimos {screener.SPRING_SEARCH_WINDOW} días")
+        print(f"     Cond.: Low<${s1:.2f} con vol≥{screener.FILTER_VOLUMEN}×SMA20, "
+              f"y cierre sobre ${s1:.2f} en ≤{screener.SPRING_RECOVERY_WINDOW}d")
 
     # 8. Calidad de la base (solo si hay Spring)
     if spring_info:
@@ -116,23 +117,24 @@ def debug_wyckoff_stock(symbol):
     # 9. Test / Gatillo de entrada
     print(f"\n--- TEST / GATILLO DE ENTRADA ---")
     if spring_info:
-        test_info = screener.detect_test_signal(hist_df, spring_info['index'], s1)
+        shakeout_idx = spring_info.get('shakeout_index', spring_info['index'])
+        test_info = screener.detect_test_signal(hist_df, spring_info['index'], s1, spring_info['low'])
         timing_score = screener.score_test_timing(
-            spring_info['index'],
+            shakeout_idx,
             test_info['index'] if test_info else None
         )
         if test_info:
-            days = test_info['index'] - spring_info['index']
+            days = test_info['index'] - shakeout_idx
             tag = "🎯 ACTIVO — SEÑAL DE ENTRADA" if test_info.get('is_current') else "✅ Completado"
             print(f"  {tag}")
-            print(f"  Fecha:     {test_info['date']}  ({days} días tras Spring)")
+            print(f"  Fecha:     {test_info['date']}  ({days} días tras el shakeout)")
             print(f"  Close:     ${test_info['close']:.2f}")
             print(f"  Volumen:   {test_info['vol_ratio']}× SMA(20)  (debe ser <1.0)")
             print(f"  Timing:    {timing_score}/20 pts  "
                   f"({'ideal (5-25d)' if 5<=days<=25 else 'ligeramente tarde' if days<=40 else 'tarde'})")
         else:
-            print(f"  ⚡ Spring OK — esperando retroceso a S1 (±0.5%) con volumen bajo")
-            print(f"  Timing score si llega hoy: {timing_score}/20 pts")
+            print(f"  ⚡ Spring OK — esperando retroceso a la zona de S1 "
+                  f"(hasta +{screener.TEST_TOLERANCE*100:.0f}%, sin perder el Spring Low) con volumen bajo")
     else:
         print("  — (requiere Spring previo)")
 

@@ -8,12 +8,11 @@ from datetime import datetime
 
 
 def get_entry_status_icon(status):
-    if 'Test Activo' in str(status):
+    s = str(status)
+    if 'ENTRADA INMEDIATA' in s:
         return "🎯"
-    elif 'Test Completado' in str(status):
+    elif 'Entrada Vigente' in s:
         return "✅"
-    elif 'Spring Detectado' in str(status):
-        return "⚡"
     else:
         return "⏳"
 
@@ -112,7 +111,7 @@ def create_wyckoff_dashboard_data():
         test_active_count = 0
         if not springs_df.empty and 'Entry_Status' in springs_df.columns:
             test_active_count = int(
-                springs_df['Entry_Status'].str.contains('Test Activo', na=False).sum()
+                springs_df['Entry_Status'].str.contains('ENTRADA INMEDIATA', na=False).sum()
             )
 
         # Estadísticas de invalidación (sobre el universo completo)
@@ -163,28 +162,32 @@ def create_wyckoff_dashboard_data():
 
             "wyckoff_criteria": {
                 "volume_profile":      f"VPVR {252} días (1 año) → POC + HVN",
-                "structural_support":  "Mínimo estructural S1 de 130 días (~6 meses) "
-                                       "ESTABLECIDO antes de la ventana de búsqueda del Spring (60 días)",
-                "confluence_filter":   "S1 dentro del 1% de un HVN o del POC (score gradual)",
+                "structural_support":  "Mínimo estructural S1 ANCLADO al shakeout: ventana "
+                                       "[shakeout−150, shakeout−5] (~7 meses previos al Spring)",
+                "confluence_filter":   "S1 cerca de POC/HVN: bonus de score (NO bloqueante)",
                 "spring_window":       "Búsqueda del Spring limitada a los últimos 60 días (frescura)",
                 "spring_conditions": [
-                    "Low < S1 (perfora soporte)",
-                    "Close > S1 (cierra encima)",
-                    "Cierre en tercio superior ≥67% de la vela",
-                    "Volumen > SMA(20) × 1.5"
+                    "Shakeout: Low < S1 con volumen > SMA(20) × 1.3 (clímax)",
+                    "Recuperación: una vela cierra de nuevo > S1 en ≤10 días",
+                    "El cierre del shakeout puede quedar abajo (no se exige tercio superior)",
                 ],
                 "test_conditions": [
-                    "Retroceso a S1 (±0.5%)",
+                    "Retroceso a la zona de S1 (hasta +2%, sin perder el Spring Low)",
                     "Volumen < SMA(20)",
                     "Volumen decreciente respecto al día anterior",
-                    "Timing ideal: 5-25 días tras el Spring"
+                    "Timing ideal: 5-25 días tras el shakeout"
                 ],
+                "actionability": "El Top 10 solo incluye entradas operables HOY: Test en la "
+                                 "vela actual, o Test en ≤5 días con precio dentro del 2% sobre S1",
+                "ranking": "Rank_Score = Wyckoff_Score (0-100) + bonus de riesgo 0-20 "
+                           "(premia un SL cercano al precio actual)",
                 "scoring": {
                     "probability_0_60": {
                         "market_health":  "0-15 pts (SPY sobre/bajo MA200)",
                         "test_timing":    "0-20 pts (5-25 días = ideal)",
                         "obv_base":       "0-15 pts (OBV alcista = acumulación)",
-                        "sector_rank":    "0-10 pts (sector top 50% del universo)"
+                        "sector_rank":    "0-10 pts (sector top 50% del universo)",
+                        "confluence":     "0-10 pts (bonus: S1 sobre POC/HVN)"
                     },
                     "potential_0_40": {
                         "base_width":    "0-15 pts (Wyckoff Cause: días en rango)",
@@ -202,19 +205,14 @@ def create_wyckoff_dashboard_data():
         }
 
         # ── Top Picks ────────────────────────────────────────────────────────
-        source_df = springs_df if not springs_df.empty else all_df
+        # SOLO entradas operables HOY (springs_df ya viene filtrado a is_actionable).
+        # Sin fallback a all_df: si no hay nada operable, el Top queda vacío a propósito.
+        source_df = springs_df
         if not source_df.empty and 'Wyckoff_Score' in source_df.columns:
             source_df = source_df.copy()
-            if 'Entry_Status' in source_df.columns:
-                source_df['_priority'] = source_df['Entry_Status'].apply(
-                    lambda x: 0 if 'Test Activo'     in str(x) else
-                              1 if 'Test Completado' in str(x) else 2
-                )
-                top_stocks = source_df.sort_values(
-                    ['_priority', 'Wyckoff_Score'], ascending=[True, False]
-                ).head(10)
-            else:
-                top_stocks = source_df.nlargest(10, 'Wyckoff_Score')
+            # Orden por Rank_Score = Wyckoff_Score + bonus por riesgo bajo (SL cercano).
+            sort_col = 'Rank_Score' if 'Rank_Score' in source_df.columns else 'Wyckoff_Score'
+            top_stocks = source_df.sort_values(sort_col, ascending=False).head(10)
 
             for i, (_, row) in enumerate(top_stocks.iterrows()):
                 entry_status = str(row.get('Entry_Status', 'Sin Señal'))
@@ -234,6 +232,7 @@ def create_wyckoff_dashboard_data():
 
                     # Scores
                     "wyckoff_score":     score,
+                    "rank_score":        safe_float(row.get('Rank_Score', score)),  # calidad + bonus riesgo
                     "probability_score": prob,
                     "potential_score":   pot,
 
