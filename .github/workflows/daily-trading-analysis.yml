@@ -3,9 +3,13 @@ name: Wyckoff Spring Analysis Diario
 
 on:
   schedule:
-    # Lunes a Viernes, 5-6h después del cierre del mercado US (01:00 UTC fijo).
-    # Martes a Sábado UTC = Lunes a Viernes US.
-    - cron: '0 1 * * 2-6'
+    # 06:00 UTC, Martes a Sábado UTC = sesiones Lunes a Viernes US.
+    # 9-10h después del cierre del mercado US (NYSE cierra a 21:00 UTC en
+    # invierno / 20:00 UTC en verano DST) → máxima fiabilidad de la vela
+    # diaria definitiva en yfinance.
+    # En España: 07:00 (invierno CET) / 08:00 (verano CEST) — dashboard listo
+    # cada mañana al despertar.
+    - cron: '0 6 * * 2-6'
   workflow_dispatch:  # Permitir ejecución manual
 
 # PERMISOS NECESARIOS PARA GITHUB PAGES
