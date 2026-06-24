@@ -20,6 +20,10 @@ class WyckoffSpringScreener:
         self.S1_ANCHOR_BUFFER = 5     # Días previos al shakeout que se excluyen del cálculo de S1
                                        # (evita que la caída inmediata hacia el shakeout contamine
                                        # el soporte, y evita la paradoja spring_low == S1).
+        self.PIVOT_WIDTH = 5          # Un swing-low es el mínimo en ±PIVOT_WIDTH velas (significancia).
+        self.SUPPORT_CLUSTER_TOL = 0.02  # Swing-lows a <2% se agrupan en un mismo nivel de soporte.
+        self.MIN_SPRING_DEPTH_PCT = 1.0  # El shakeout debe perforar el soporte ≥1% para ser un
+                                          # shakeout real (no un mero toque/test del soporte).
         self.SPRING_SEARCH_WINDOW = 60  # Últimos 60 días donde buscar el Spring
                                         # (S1 debe estar establecido ANTES de la ventana de Spring)
         self.FILTER_VOLUMEN = 1.3     # Multiplicador SMA(20) para validar el shakeout del Spring.
@@ -43,6 +47,11 @@ class WyckoffSpringScreener:
         # Springs sin Test y entradas pasadas → watchlist (no operables).
         self.ACTIONABLE_TEST_MAX_AGE = 5         # Días máx. desde Test para entrada vigente
         self.ACTIONABLE_PRICE_MAX_ABOVE_S1 = 0.02 # 2% máx. sobre S1 para entrada vigente
+        # Gate de CALIDAD para operabilidad (separa springs reales de rebotes cualquiera).
+        # Validado AAPL-safe: AAPL tuvo base=115d y depth=3.48% (pasa con holgura). NO se puede
+        # filtrar por OBV>0 ni vol≥1.5× ni touches≥2: AAPL falla esos (OBV −0.05, vol 1.36, 1 toque).
+        self.ACTIONABLE_MIN_BASE_WIDTH = 60      # Wyckoff "cause": días de base requeridos
+        self.ACTIONABLE_MIN_DEPTH_PCT = 1.5      # Profundidad mín. del shakeout para operar
         # === RANKING POR RIESGO ===
         # El Top 10 se ordena por Rank_Score = Wyckoff_Score + bonus por riesgo bajo.
         # El bonus premia un SL cercano al precio actual (menor % de pérdida si se opera hoy).
@@ -327,6 +336,45 @@ class WyckoffSpringScreener:
 
     # =================== SOPORTE ESTRUCTURAL S1 ===================
 
+    def find_support_clusters(self, df, end_idx):
+        """
+        Detecta NIVELES de soporte por swing-lows (pivotes) en la ventana previa al shakeout
+        [end_idx − SUPPORT_LOOKBACK, end_idx − S1_ANCHOR_BUFFER], y los agrupa en clusters.
+
+        Un swing-low es una vela cuyo Low es el mínimo en ±PIVOT_WIDTH velas (mínimo local
+        significativo). Los pivotes a <SUPPORT_CLUSTER_TOL entre sí se fusionan en un nivel;
+        el 'floor' del cluster es el más bajo y 'touches' cuántas veces se testeó.
+
+        Esto reemplaza el "mínimo absoluto de la ventana": permite que el Spring perfore el
+        soporte del RANGO RECIENTE (p.ej. AMD $135) en vez del mínimo histórico profundo
+        (AMD $93) que el precio ni siquiera tocó. Devuelve clusters ASCENDENTES por floor.
+        """
+        start = max(0, end_idx - self.SUPPORT_LOOKBACK)
+        end = max(0, end_idx - self.S1_ANCHOR_BUFFER)
+        p = self.PIVOT_WIDTH
+        if end - start < (2 * p + 1):
+            return []
+
+        lows = df['Low'].values[start:end].astype(float)
+        n = len(lows)
+        pivot_prices = []
+        for j in range(p, n - p):
+            if lows[j] == lows[j - p:j + p + 1].min():
+                pivot_prices.append(float(lows[j]))
+
+        if not pivot_prices:
+            return []
+
+        pivot_prices.sort()
+        tol = self.SUPPORT_CLUSTER_TOL
+        clusters = []
+        for pr in pivot_prices:
+            if clusters and (pr - clusters[-1]['floor']) / clusters[-1]['floor'] <= tol:
+                clusters[-1]['touches'] += 1  # floor ya es el menor (lista ordenada asc.)
+            else:
+                clusters.append({'floor': pr, 'touches': 1})
+        return clusters  # ascendentes por floor
+
     def find_structural_support(self, df, anchor_idx=None):
         """
         S1 = mínimo del soporte estructural previo. Crítico para Wyckoff: el Spring debe
@@ -415,9 +463,10 @@ class WyckoffSpringScreener:
              por encima de S1 ('jump back across the creek'), normalmente con volumen normal.
              Confirma que la perforación fue una trampa (absorción institucional).
 
-        S1 se calcula POR CANDIDATO anclado al shakeout (no una ventana fija respecto a 'hoy'),
-        para capturar tanto bases largas como bases recientes. spring_info['s1'] expone ese
-        soporte para el resto del pipeline.
+        S1 NO es el mínimo absoluto de la ventana, sino el SWING-LOW MÁS BAJO que el shakeout
+        perfora Y reconquista (ver find_support_clusters). Así el Spring se ancla al soporte del
+        rango que realmente rompió, no a un mínimo histórico profundo que el precio ni tocó.
+        spring_info['s1'] expone ese soporte para el resto del pipeline.
 
         El Spring se ancla en la RECUPERACIÓN (spring_info['index'] = recovery_index) porque
         el Test secundario ocurre después de ella. 'low' = mínimo del shake-out completo.
@@ -429,33 +478,51 @@ class WyckoffSpringScreener:
         vol_sma = df['Volume'].rolling(20).mean()
         search_start = max(20, len(df) - self.SPRING_SEARCH_WINDOW)
         n = len(df)
+        closes = df['Close'].values.astype(float)
+        lows = df['Low'].values.astype(float)
         best_spring = None
 
         for i in range(search_start, n):
             row = df.iloc[i]
-            low_i = float(row['Low'])
+            low_i = lows[i]
 
-            # --- Fase 1: shakeout (volumen de clímax que perfora el soporte previo) ---
+            # --- Fase 1: shakeout (volumen de clímax) ---
             sma_vol = float(vol_sma.iloc[i]) if pd.notna(vol_sma.iloc[i]) else 0.0
             if sma_vol <= 0 or float(row['Volume']) <= sma_vol * self.FILTER_VOLUMEN:
                 continue
 
-            s1 = self.find_structural_support(df, anchor_idx=i)  # soporte anclado a ESTE candidato
-            if low_i >= s1:
-                continue  # no perfora su propio soporte previo → no es shakeout
+            # Niveles de soporte (swing-lows agrupados) previos a este shakeout
+            clusters = self.find_support_clusters(df, i)
+            if not clusters:
+                # Sin pivotes: respaldo al mínimo anclado de la ventana
+                fb = self.find_structural_support(df, anchor_idx=i)
+                clusters = [{'floor': fb, 'touches': 1}]
 
-            # --- Fase 2: recuperación (cierre de nuevo sobre S1 en N días) ---
-            recovery_idx = None
-            spring_low = low_i
-            rec_end = min(n, i + 1 + self.SPRING_RECOVERY_WINDOW)
-            for j in range(i, rec_end):
-                spring_low = min(spring_low, float(df.iloc[j]['Low']))
-                if float(df.iloc[j]['Close']) > s1:
-                    recovery_idx = j
+            # --- Fase 2: elegir el soporte MÁS BAJO que se perfora Y se reconquista ---
+            # (ascendente por floor → el primero que cumple es el más bajo perforado+reclamado)
+            chosen = None
+            for c in clusters:
+                s1 = c['floor']
+                if low_i >= s1:
+                    continue  # el shakeout no perfora este soporte
+                if (s1 - low_i) / s1 * 100 < self.MIN_SPRING_DEPTH_PCT:
+                    continue  # perforación trivial (mero toque), no es un shakeout real
+                recovery_idx = None
+                spring_low = low_i
+                rec_end = min(n, i + 1 + self.SPRING_RECOVERY_WINDOW)
+                for j in range(i, rec_end):
+                    if lows[j] < spring_low:
+                        spring_low = lows[j]
+                    if closes[j] > s1:
+                        recovery_idx = j
+                        break
+                if recovery_idx is not None:
+                    chosen = (s1, recovery_idx, spring_low, c['touches'])
                     break
-            if recovery_idx is None:
-                continue  # Perforó pero aún no recupera → no es Spring confirmado (todavía)
+            if chosen is None:
+                continue  # perforó algo pero no reconquistó ningún soporte → no confirmado
 
+            s1, recovery_idx, spring_low, touches = chosen
             candle_range = float(row['High']) - low_i
             close_pos = (float(row['Close']) - low_i) / candle_range if candle_range > 0 else 0.0
 
@@ -465,7 +532,8 @@ class WyckoffSpringScreener:
                 'shakeout_index': i,
                 'recovery_index': recovery_idx,
                 'recovery_date': str(df.index[recovery_idx].date()),
-                's1': round(s1, 4),                         # soporte anclado → usado por el pipeline
+                's1': round(s1, 4),                         # soporte (swing-low) perforado+reclamado
+                'support_touches': touches,                 # veces que se testeó ese soporte
                 'low': spring_low,                          # mínimo del shake-out → base del SL
                 'close': float(row['Close']),
                 'high': float(row['High']),
@@ -898,18 +966,37 @@ class WyckoffSpringScreener:
         # Paso 7: Comprobar si está caduco (Spring sin Test tras N días)
         result['spring_stale'] = self.check_spring_stale(df, spring_idx, test_idx)
 
+        # Paso 7b: Métricas de calidad de la base (necesarias para el gate de operabilidad)
+        result['obv_trend_base'] = self.calculate_obv_trend_in_base(df, spring_idx)
+        result['base_width_days'] = self.calculate_base_width(df, spring_idx, s1)
+        result['test_timing_score'] = self.score_test_timing(shakeout_idx, test_idx)
+
+        # Gate de CALIDAD: un setup solo es operable si tiene una base (causa Wyckoff) suficiente
+        # y un shakeout con profundidad real. Separa springs genuinos de rebotes ordinarios.
+        spring_depth = float(spring_info.get('spring_depth_pct', 0))
+        quality_ok = (result['base_width_days'] >= self.ACTIONABLE_MIN_BASE_WIDTH and
+                      spring_depth >= self.ACTIONABLE_MIN_DEPTH_PCT)
+
         # Paso 8: Determinar entry_status final.
         # FILTRO ESTRICTO: is_actionable=True SOLO para entradas operables HOY:
         #   - Test es la vela actual (entrada ideal inmediata), O
         #   - Test ocurrió en últimos ACTIONABLE_TEST_MAX_AGE días Y
         #     precio sigue dentro de ACTIONABLE_PRICE_MAX_ABOVE_S1 sobre S1.
-        # Springs sin Test, entradas superadas, fallidos y caducos → no operables.
+        #   ...Y SIEMPRE que pase el gate de calidad (base + profundidad).
+        # Springs sin Test, entradas superadas, fallidos, caducos y débiles → no operables.
         if result['spring_failed']:
             result['entry_status'] = f"Spring FALLIDO ({invalidation['fail_date']})"
             result['is_actionable'] = False
         elif result['spring_stale']:
             days = (len(df) - 1) - spring_idx
             result['entry_status'] = f'Spring Caducado (>{self.SPRING_MAX_AGE_WITHOUT_TEST}d sin Test, {days}d)'
+            result['is_actionable'] = False
+        elif test_info and not quality_ok:
+            # Hay Test, pero la calidad del setup es insuficiente para operar
+            result['entry_status'] = (
+                f'Setup débil (base {result["base_width_days"]}d<{self.ACTIONABLE_MIN_BASE_WIDTH} '
+                f'o depth {spring_depth:.1f}%<{self.ACTIONABLE_MIN_DEPTH_PCT})'
+            )
             result['is_actionable'] = False
         elif test_info:
             days_since_test = int(len(df) - 1) - int(test_info['index'])
@@ -939,11 +1026,6 @@ class WyckoffSpringScreener:
             days_since_spring = (len(df) - 1) - spring_idx
             result['entry_status'] = f'Watchlist: Spring sin Test ({days_since_spring}d)'
             result['is_actionable'] = False
-
-        # Paso 9: Métricas de calidad de la base
-        result['obv_trend_base'] = self.calculate_obv_trend_in_base(df, spring_idx)
-        result['base_width_days'] = self.calculate_base_width(df, spring_idx, s1)
-        result['test_timing_score'] = self.score_test_timing(shakeout_idx, test_idx)
 
         # Paso 10: Gestión de riesgo
         risk_params = self.calculate_risk_params(spring_info, df, s1, hvn_list)
@@ -1079,10 +1161,12 @@ class WyckoffSpringScreener:
                 # Spring
                 'Spring_Detected':      an.get('spring_detected'),
                 'Spring_Date':          sp.get('date', ''),
+                'Spring_Recovery_Date': sp.get('recovery_date', ''),
                 'Spring_Low':           sp.get('low', ''),
                 'Spring_Volume_Ratio':  sp.get('vol_ratio', ''),
                 'Spring_Close_Position':sp.get('close_position', ''),
                 'Spring_Depth_Pct':     sp.get('spring_depth_pct', ''),
+                'Support_Touches':      sp.get('support_touches', ''),
                 'Spring_Failed':        an.get('spring_failed', False),
                 'Spring_Fail_Date':     an.get('spring_fail_date', ''),
                 'Spring_Stale':         an.get('spring_stale', False),

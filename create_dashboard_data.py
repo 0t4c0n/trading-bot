@@ -162,13 +162,13 @@ def create_wyckoff_dashboard_data():
 
             "wyckoff_criteria": {
                 "volume_profile":      f"VPVR {252} días (1 año) → POC + HVN",
-                "structural_support":  "Mínimo estructural S1 ANCLADO al shakeout: ventana "
-                                       "[shakeout−150, shakeout−5] (~7 meses previos al Spring)",
+                "structural_support":  "S1 = swing-low más bajo (mín. local en ±5 velas, clusterizado) "
+                                       "que el shakeout perfora ≥1% y reconquista; no el mínimo absoluto",
                 "confluence_filter":   "S1 cerca de POC/HVN: bonus de score (NO bloqueante)",
                 "spring_window":       "Búsqueda del Spring limitada a los últimos 60 días (frescura)",
                 "spring_conditions": [
-                    "Shakeout: Low < S1 con volumen > SMA(20) × 1.3 (clímax)",
-                    "Recuperación: una vela cierra de nuevo > S1 en ≤10 días",
+                    "Shakeout: Low perfora un swing-low de soporte ≥1% con volumen > SMA(20) × 1.3",
+                    "Recuperación: una vela cierra de nuevo > ese soporte en ≤10 días",
                     "El cierre del shakeout puede quedar abajo (no se exige tercio superior)",
                 ],
                 "test_conditions": [
@@ -269,10 +269,12 @@ def create_wyckoff_dashboard_data():
                     "spring": {
                         "detected":        safe_bool(row.get('Spring_Detected', False)),
                         "date":            str(row.get('Spring_Date', '')),
+                        "recovery_date":   str(row.get('Spring_Recovery_Date', '')),
                         "low":             safe_float(row.get('Spring_Low', 0)),
                         "volume_ratio":    safe_float(row.get('Spring_Volume_Ratio', 0)),
                         "close_position":  safe_float(row.get('Spring_Close_Position', 0)),
                         "depth_pct":       safe_float(row.get('Spring_Depth_Pct', 0)),
+                        "support_touches": int(safe_float(row.get('Support_Touches', 0))),
                         "failed":          safe_bool(row.get('Spring_Failed', False)),
                         "fail_date":       str(row.get('Spring_Fail_Date', '')),
                         "stale":           safe_bool(row.get('Spring_Stale', False)),
