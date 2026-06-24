@@ -134,6 +134,10 @@ class WyckoffSpringScreener:
                             if isinstance(df.columns, pd.MultiIndex):
                                 df.columns = df.columns.droplevel(-1)
                             if not df.empty:
+                                # Solo conservar columnas usadas (Open no se usa nunca)
+                                # → −20% memoria por acción
+                                df = df[[c for c in ['High', 'Low', 'Close', 'Volume']
+                                         if c in df.columns]]
                                 all_data[symbol] = df
                     success = True
                     break
@@ -157,6 +161,8 @@ class WyckoffSpringScreener:
             if not spy_data.empty:
                 if isinstance(spy_data.columns, pd.MultiIndex):
                     spy_data.columns = spy_data.columns.droplevel(-1)
+                # check_market_health solo usa Close → resto descartado
+                spy_data = spy_data[[c for c in ['Close'] if c in spy_data.columns]]
                 all_data['_MARKET_INDEX'] = spy_data
                 print("✓ ^GSPC descargado correctamente.")
         except Exception as e:
