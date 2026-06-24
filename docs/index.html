@@ -366,7 +366,7 @@
     }
 
     function fmtPrice(v) {
-        if (!v) return '—';
+        if (v === null || v === undefined || v === '' || isNaN(v)) return '—';
         return '$' + Number(v).toFixed(2);
     }
 

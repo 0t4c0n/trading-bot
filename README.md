@@ -1,345 +1,170 @@
-# 🎯 Minervini SEPA Stock Screener
+# 🌊 Wyckoff Spring Screener
 
-Sistema automatizado basado en la **metodología SEPA de Mark Minervini** que analiza acciones del NYSE y NASDAQ usando 11 filtros técnicos y fundamentales para identificar stocks en **Stage 2 Uptrends**.
+Sistema automatizado de **Swing Trading Macro** basado en la **Fase C de Wyckoff** combinada con análisis de **Volume Profile (VPVR)**. Escanea diariamente todas las acciones del NYSE + NASDAQ buscando rebotes institucionales en soportes estructurales validados por liquidez.
 
-## 📱 Acceso Móvil
+## 📱 Dashboard
 
-**Tu dashboard estará disponible en:**
 `https://[tu-usuario].github.io/[nombre-repo]/`
 
-## 🎯 Metodología Minervini SEPA
+## 🎯 Filosofía de la estrategia
 
-### Sistema de 11 Filtros (8 Técnicos + 3 Fundamentales)
+> Capturar giros mayores en soportes estructurales de medio/largo plazo, diseñados para mantener operaciones durante **semanas o meses**.
 
-**8 Criterios Técnicos Obligatorios:**
-1. **Price > MA150 y MA200** - Precio por encima de medias largas
-2. **MA150 > MA200** - Alineación de medias móviles  
-3. **MA200 trending up ≥1 mes** - Tendencia alcista confirmada
-4. **Price > MA50 > MA150 > MA200** - Jerarquía completa de MAs
-5. **Price ≥30% above 52-week low** - Recuperación significativa
-6. **Price within 25% of 52-week high** - Proximidad a máximos
-7. **RS Rating ≥70** - Fortaleza relativa vs mercado
-8. **VCP/Institutional accumulation** - Patrones de acumulación
-
-**3 Criterios Fundamentales Obligatorios:**
-1. **Beneficios Positivos y Crecimiento (Earnings)**: Se requiere que la empresa tenga beneficios netos positivos (`Net Income > 0`). Además, se busca un crecimiento de beneficios interanual (YoY) de al menos un 25%.
-2. **Crecimiento y Rentabilidad (Filtro Inteligente)**:
-   - **ROE ≥ 17%** (obligatorio).
-   - Y cumplir **uno** de los siguientes criterios de crecimiento:
-     - **Camino Clásico**: Crecimiento de ingresos (Revenue) ≥ 20%.
-     - **Camino "Powerhouse"**: Crecimiento de beneficios (Earnings) ≥ 40% **y** crecimiento de ingresos (Revenue) ≥ 10%.
-3. **Institutional Evidence (Híbrido)** - Sistema de 8 criterios:
-   - ✅ Acumulación por volumen/precio (0-2 pts)
-   - ✅ Market cap óptimo $500M-$50B (0-2 pts) 
-   - ✅ Propiedad institucional real (`heldPercentInstitutions`): ≥60%=2pts, ≥30%=1pt (0-2 pts)
-   - ✅ Liquidez diaria >$5M volume (0-1 pt)
-   - ✅ Shares outstanding <100M (0-1 pt)
-   - 📊 **Requiere 5/8 puntos para pasar**
-
-### Sistema de Scoring Minervini (0-100 puntos)
-
-- **Stage Analysis** (0-40 pts): Stage 2 = 40, Stage 1/3 = 20, Stage 4 = 0
-- **RS Rating** (0-30 pts): Escalado directo (RS 90+ = 27+ puntos)
-- **52W Position** (0-20 pts): Cerca del high + lejos del low  
-- **Technical Patterns** (0-10 pts): VCP + Institutional accumulation
-
-**Clasificación por Score:**
-- **80-100**: 🎯 BUY - Strong Stage 2
-- **60-79**: ✅ BUY - Good Setup
-- **40-59**: ⚠️ WATCH - Developing
-- **20-39**: ⏳ WAIT - Base/Top
-- **0-19**: ❌ AVOID - Weak/Decline
-
-## ⚙️ Configuración Inicial
-
-### 1. Crear repositorio en GitHub
-```bash
-# Crear nuevo repositorio público en GitHub llamado "minervini-screener"
-```
-
-### 2. Estructura de archivos necesaria
-```
-minervini-screener/
-├── script_automated.py       # Sistema Minervini SEPA completo
-├── create_dashboard_data.py   # Generador de JSON con scoring
-├── requirements.txt           # Dependencias Python + yfinance
-├── .github/
-│   └── workflows/
-│       └── daily-trading-analysis.yml  # GitHub Action
-└── docs/
-    └── index.html            # Dashboard Minervini móvil
-```
-
-### 3. Activar GitHub Pages
-1. Ve a **Settings** > **Pages** en tu repositorio
-2. En **Source** selecciona **GitHub Actions**
-3. Guarda los cambios
-
-### 4. Configurar automatización
-El screener se ejecutará automáticamente:
-- **Horario**: 01:00 UTC, que corresponde a 4-5 horas después del cierre del mercado de EE. UU.
-- **Días**: Martes a Sábado UTC (equivale a Lunes-Viernes días de mercado US)
-- **Duración**: ~60-120 minutos (análisis completo + cálculos Minervini)
-- **Ejecución manual**: Pestaña "Actions" > "Run workflow"
-
-### Horarios de mercado US:
-- **EST (Nov-Mar)**: 9:30 AM - 4:00 PM = 14:30 - 20:00 UTC
-- **EDT (Mar-Nov)**: 9:30 AM - 4:00 PM = 13:30 - 19:00 UTC
-
-### Hora en España:
-- **Horario estándar (invierno)**: 02:00 (2 AM) 
-- **Horario de verano**: 03:00 (3 AM)
-
-## 🏛️ Sistema Híbrido de Evidencia Institucional
-
-### Implementación Avanzada (5/8 criterios requeridos)
-
-El sistema detecta **evidencia institucional real** combinando múltiples fuentes de datos gratuitas:
-
-**1. Análisis de Volumen/Precio (0-2 puntos)**
-```python
-# Detección de patrones de acumulación
-recent_volume_avg > volume_50d_avg * 1.15
-high_volume_up_days_ratio > 65%
-neutral_days_volume_spike > 20%  # Instituciones acumulan sin mover precio
-```
-
-**2. Criterios de Tamaño Minervini (0-2 puntos)** 
-```python
-# Sweet spot institucional
-market_cap_range = $500M - $50B    # 2 puntos
-market_cap_minimum = $100M         # 1 punto
-```
-
-**3. Propiedad Institucional Real (0-2 puntos)**
-```python
-# Dato directo de yfinance: % del float en manos de fondos e instituciones
-inst_pct = ticker_info.get('heldPercentInstitutions')
-high_institutional   = inst_pct >= 0.60  # 2 puntos
-moderate_institutional = inst_pct >= 0.30  # 1 punto
-```
-
-**4. Liquidez Institucional (0-1 punto)**
-```python
-daily_dollar_volume = avg_volume * current_price
-adequate_liquidity = >$5M daily     # 1 punto
-```
-
-**5. Share Count Óptimo (0-1 punto)**
-```python
-minervini_preference = <100M shares  # 1 punto
-```
-
-### Ventajas del Sistema Híbrido
-
-- ✅ **Sin APIs premium** - Solo datos gratuitos de yfinance
-- ✅ **Multifactorial** - 8 criterios vs detección básica de volumen
-- ✅ **Scoring gradual** - 0-8 puntos vs binario pass/fail
-- ✅ **Criterios Minervini** - Market cap, float, shares outstanding
-- ✅ **Fallbacks inteligentes** - Funciona con datos parciales
-- ✅ **Logging detallado** - Debugging y transparency
-
-### Comparación con Detección Básica
-
-| Aspecto | Básico | Híbrido Mejorado |
-|---------|---------|------------------|
-| **Criterios** | 2 factores | 8 factores |
-| **Market Cap** | ❌ No considera | ✅ $500M-$50B óptimo |
-| **Float Analysis** | ❌ No analiza | ✅ Institutional ratio |
-| **Liquidez** | ❌ Solo volumen | ✅ Dollar volume |
-| **Share Count** | ❌ Ignorado | ✅ <100M preferido |
-| **Scoring** | ❌ Binario | ✅ 0-8 puntos |
-| **Precisión** | ~60% | ~85% (estimado) |
-
-## 🔍 Stage Analysis de Minervini
-
-El sistema categoriza cada acción en uno de los 4 stages:
-
-### 📈 Stage 2 (Uptrend) - COMPRAR
-- **Características**: Todas las MAs alineadas, RS Rating >70, VCP patterns
-- **Acción**: Posiciones largas, stop loss 7-8%
-- **Score típico**: 60-100 puntos
-
-### ⏳ Stage 1 (Base) / Stage 3 (Top) - ESPERAR  
-- **Características**: Consolidación, MAs entrelazadas, RS variable
-- **Acción**: Watch list, esperar breakout/breakdown
-- **Score típico**: 20-59 puntos
-
-### 📉 Stage 4 (Decline) - EVITAR
-- **Características**: Precio bajo MA200, RS Rating <50, distribución
-- **Acción**: No comprar, considerar shorts
-- **Score típico**: 0-39 puntos
-
-## 📊 Dashboard Minervini
-
-### Características del Dashboard:
-- ✅ **Top 10** stocks por Minervini Score
-- 🎯 **Stage Analysis** visual con iconos
-- 📈 **RS Rating** con clasificación (Exceptional/Strong/Good/Average/Weak)
-- 📊 **Posición 52W** (distancia a high/low)
-- 🔍 **Patrones técnicos** (VCP, Institutional Accumulation)
-- ⭐ **Recomendaciones** automáticas (BUY/WATCH/WAIT/AVOID)
-- 📱 **Responsive** para móvil
-- 🔄 **Auto-refresh** cada 5 minutos
-
-### Información mostrada por stock:
-- **Minervini Score** (0-100) con ranking
-- **Stage Analysis** con icono visual
-- **RS Rating** con etiqueta de fortaleza
-- **Posición 52W** (% above low, % from high)
-- **Indicadores técnicos** (VCP, Institutional, Earnings+, ROE+)
-- **Recomendación automática** basada en score y stage
-- **Niveles MA** (50, 150, 200)
-- **Volumen promedio** 50 días en millones
-
-## 🚀 Proceso de Ejecución Automático
-
-### GitHub Actions Workflow:
-1. **01:00 UTC (EST) / 00:00 UTC (EDT)** - Se ejecuta análisis completo
-2. **Descarga** datos de ~3,000-8,000 acciones NYSE + NASDAQ
-3. **Procesa** en lotes de 30 (reducido para mayor complejidad Minervini y fiabilidad de API)
-4. **Aplica** los 11 filtros Minervini a todo el universo
-5. **Calcula** Minervini Score y RS Rating para ranking
-6. **Identifica** Stage Analysis para cada stock
-7. **Genera** JSON con top 10 y estadísticas completas
-8. **Publica** en GitHub Pages
-9. **Disponible** desde la madrugada en España
-
-**⏱️ Duración total**: 60-120 minutos (más tiempo que sistema anterior)
-
-### Manual:
-```bash
-# Ejecutar localmente (requiere 2 años de datos históricos)
-python script_automated.py
-python create_dashboard_data.py
-```
-
-## 📈 Interpretación del Minervini Score
-
-**Score Components (máximo 100 puntos):**
-- **Stage Analysis** (0-40): Peso principal del scoring
-  - Stage 2 Uptrend = 40 pts (máximo)
-  - Stage 1/3 Base/Top = 20 pts  
-  - Stage 4 Decline = 0 pts
-- **RS Rating** (0-30): Fortaleza relativa vs mercado
-  - RS 90+ = ~27 pts, RS 70-89 = ~21-26 pts
-- **52W Position** (0-20): Optimización de entrada
-  - Cerca máximo + lejos mínimo = más puntos
-- **Technical Patterns** (0-10): Bonificaciones
-  - VCP detected = +3, Institutional accumulation = +3
-  - Earnings acceleration = +2, ROE strong = +2
-
-**Multiplicadores por señal de entrada:**
-
-La puntuación base se multiplica en función de la calidad de la señal de entrada detectada:
-- **Pivot Point**: ×1.15 (señal de máxima calidad)
-- **VCP Setup**: ×1.10 (setup en formación)
-- **MA-Bounce-50**: ×1.07 (rebote en MA50)
-- **MA-Bounce-21**: ×1.05 (rebote en MA21)
-- **Consolidando**: ×1.00 (sin señal clara)
-- **Extendido**: ×0.80 (penalización por sobreextensión)
-
-**Clasificación de Inversión:**
-- **90-100**: Exceptional - Posición máxima permitida
-- **80-89**: Strong Setup - Posición estándar  
-- **70-79**: Good Entry - Posición reducida
-- **60-69**: Developing - Watch list
-- **<60**: Wait/Avoid - Sin entrada
-
-## ⚠️ Consideraciones del Sistema Minervini
-
-- **Datos requeridos**: Mínimo 250 días (~1 año) por acción
-- **Cobertura total**: ~3,000-8,000 acciones (NYSE + NASDAQ completos)
-- **Duración**: 60-120 minutos (vs 45-90 min sistema anterior)
-- **Selectividad**: Muy alta (típicamente <2% éxito vs ~5% anterior)
-- **Timeout**: GitHub Actions configurado con 2 horas máximo
-- **Rate limiting**: Pausas de 15s entre lotes, 0.3s entre acciones
-- **Delay**: Datos con 15-20 min de retraso (APIs gratuitas)
-- **Filosofía**: "Menos stocks, mejor calidad" (Quality over Quantity)
-- **Evidencia institucional**: Sistema híbrido 8-criterios sin APIs premium
-- **Precisión mejorada**: ~85% vs ~60% en detección institucional básica
-
-## 🔧 Personalización Avanzada
-
-### Modificar sensibilidad de filtros:
-```python
-# En script_automated.py - función get_minervini_analysis()
-
-# RS Rating threshold
-rs_strong = rs_rating >= 70  # Cambiar a 80 para mayor selectividad
-
-# 52W position
-price_above_30pct_low = distance_from_low >= 30  # Cambiar a 40
-price_near_high = distance_from_high <= 25       # Cambiar a 15
-
-# Earnings growth
-strong_earnings = quarterly_earnings_growth >= 0.25  # Cambiar a 0.30
-```
-
-### Ajustar sistema de scoring:
-```python
-# En función calculate_minervini_score()
-
-# Pesos del scoring (deben sumar <= 100)
-STAGE_WEIGHT = 40    # Peso de Stage Analysis
-RS_WEIGHT = 30       # Peso de RS Rating  
-POSITION_WEIGHT = 20 # Peso de posición 52W
-PATTERN_WEIGHT = 10  # Peso de patrones técnicos
-```
-
-### Modificar tamaño de lotes:
-```python
-batch_size = 30  # Reducir a 20-25 para mayor estabilidad, aumentar a 50 con precaución
-```
-
-## 📞 Solución de Problemas Específicos
-
-### Error "Datos insuficientes (<250 días)":
-- El sistema Minervini requiere más datos históricos
-- Verificar que period="2y" en get_stock_data_with_minervini()
-- Considerar period="3y" para mayor robustez
-
-### Error "Rate limit persistente":
-- Aumentar pausas: batch pause a 20s, individual a 0.5s
-- Reducir batch_size a 25-30 acciones
-- El sistema Minervini hace más requests por acción
-
-### Dashboard muestra Score 0:
-- Verificar que calculate_minervini_score() se ejecuta
-- Confirmar que hay datos de Stage Analysis
-- Revisar logs para errores en análisis técnico
-
-### Sin Stage 2 stocks encontrados:
-- Es normal - Minervini es muy selectivo (<2% típico)
-- Revisar elimination_analysis en dashboard
-- Considerar relajar RS Rating a 60 temporalmente
-
-## 🎯 Próximos Pasos de Implementación
-
-1. **Copia** todos los archivos actualizados a tu repositorio
-2. **Activa** GitHub Pages en configuración
-3. **Espera** a la primera ejecución automática
-4. **Revisa** logs en pestaña "Actions" para debugging
-5. **Ajusta** filtros según resultados iniciales
-
-## 📚 Referencias Minervini
-
-- **Libro principal**: "Trade Like a Stock Market Wizard" - Mark Minervini
-- **Metodología SEPA**: Specific Entry Point Analysis
-- **Track record**: 155% retorno anual (US Investing Championship 1997)
-- **Filosofía**: "Stage 2 stocks only" - Never buy Stage 4
-- **Risk management**: Stop loss 7-8%, Position size 1% capital máximo
-
-## ⚖️ Disclaimer Legal
-
-Este sistema es **solo para análisis técnico automatizado** basado en metodología pública de Mark Minervini. No constituye asesoramiento financiero. El trading conlleva riesgo de pérdida de capital. Siempre:
-
-- **Gestiona el riesgo**: Stop loss 7-8% obligatorio
-- **Position sizing**: Máximo 1% del capital por operación  
-- **Diversificación**: Máximo 10 posiciones simultáneas
-- **Paper trading**: Prueba el sistema antes de capital real
-- **Educación continua**: Estudia los libros de Minervini
+- **Temporalidad única**: gráfico diario (1D)
+- **Universo**: NYSE + NASDAQ (~8000 acciones), **excluye penny stocks (<$5)**
+- **Frecuencia**: ejecución automática diaria (5h tras cierre US)
+- **Resultado**: top 10 setups operables con SL/TP/R:R precisos
 
 ---
 
-**🚀 Desarrollado por 0t4c0n | Sistema Minervini SEPA Automatizado**
+## 🧠 Metodología (Fase C Wyckoff + VPVR)
+
+### 1. Volume Profile Anual (VPVR)
+Calcula el perfil de volumen de las últimas **252 sesiones** (1 año):
+- **POC** (Point of Control): nivel de máximo volumen
+- **HVN** (High Volume Nodes): zonas con volumen ≥1.5× la media
+
+Estos son los precios donde el dinero institucional ha estado más activo → actúan como imán y soporte/resistencia.
+
+### 2. Soporte Estructural S1
+Mínimo más bajo en los **130 días previos a la ventana de búsqueda del Spring**. Es un soporte **establecido**, no el mínimo absoluto del rango (para que el Spring pueda perforarlo).
+
+### 3. Filtro de Confluencia
+S1 debe estar **dentro del 1.5%** de un HVN o POC. Score gradual:
+- 0–0.5%: 30 pts (perfecta) · 0.5–1.0%: 22 pts (alta) · 1.0–1.5%: 14 pts (válida)
+
+### 4. Spring (Fase C) — últimos 60 días
+Vela que cumple **TODAS** las condiciones:
+- `Low < S1` (perforación del soporte)
+- `Close > S1` (recuperación)
+- Cierre en el **tercio superior** del rango (≥67%)
+- Volumen **>1.5× SMA(20)** (absorción institucional)
+
+### 5. Validación post-Spring
+- ❌ **Spring FALLIDO**: si tras el Spring algún Close < Spring Low → invalidado y excluido
+- ⏱️ **Spring CADUCADO**: si pasan >30 días sin Test → señal estancada, excluido
+
+### 6. Test (gatillo de entrada)
+Retroceso a la zona de S1 (±0.5%) con:
+- Volumen < SMA(20) (oferta agotada)
+- Volumen decreciente respecto al día anterior
+
+**Timing ideal**: 5–25 días tras el Spring (max 20 pts en score).
+
+### 7. Filtro de Mercado
+Si el **S&P 500 está por debajo de su MA200**, el mercado es bajista y los Springs tienen mucha menor probabilidad. El score de probabilidad cae a 0–4 pts (de 15 posibles), penalizando heavily esas señales.
+
+---
+
+## 📊 Sistema de Scoring Dual (0–100)
+
+### Probabilidad (0–60 pts) — ¿es probable que el rebote ocurra?
+| Factor | Pts | Detalle |
+|---|---|---|
+| Salud del mercado | 0–15 | SPY sobre MA200 + alineación MA50/MA200 |
+| Timing del Test | 0–20 | 5–25 días = ideal (20 pts), demás escalado |
+| OBV en la base | 0–15 | Pendiente positiva = acumulación silenciosa |
+| Ranking industrial | 0–10 | Sector en top 25% = 10 pts, top 50% = 7 pts |
+
+### Potencial (0–40 pts) — ¿cuánto puede subir?
+| Factor | Pts | Detalle |
+|---|---|---|
+| Anchura de base (Wyckoff Cause) | 0–15 | Días en rango S1±20% (causa → efecto) |
+| R:R hasta TP2 | 0–15 | R:R ≥4 = 15 pts, ≥3 = 10 pts |
+| Profundidad del shake-out | 0–10 | Wick más profundo = más absorción |
+
+**Total = Probabilidad + Potencial**
+
+---
+
+## 🛡️ Gestión de Riesgo
+
+| | Fórmula | Notas |
+|---|---|---|
+| **Entrada** | S1 × 1.002 | Ligeramente por encima de S1 |
+| **Stop Loss** | Spring Low − 0.5×ATR(14) | Margen anti-volatilidad |
+| **TP1 (50%)** | Resistencia local 60d previos al Spring | Mover SL a breakeven |
+| **TP2 (50%)** | Siguiente HVN superior o R:R 1:3.5 | Dejar correr |
+
+El margen `0.5×ATR(14)` en el SL es **crítico**: añade un buffer proporcional a la volatilidad típica de cada acción, evitando que el ruido normal del mercado active el stop.
+
+---
+
+## ⚙️ Componentes
+
+| Archivo | Función |
+|---|---|
+| `script_automated.py` | Screener principal (descarga, análisis Wyckoff, save CSV) |
+| `create_dashboard_data.py` | Convierte CSV a JSON para el dashboard |
+| `debug_stock.py` | Análisis detallado paso a paso de una acción |
+| `docs/index.html` | Dashboard web (responsive móvil) |
+| `docs/data.json` | Output JSON consumido por el dashboard |
+| `.github/workflows/daily-trading-analysis.yml` | Ejecución diaria automática |
+
+---
+
+## 🚀 Uso
+
+### Local
+```bash
+pip install -r requirements.txt
+python script_automated.py        # genera CSVs
+python create_dashboard_data.py   # genera docs/data.json
+open docs/index.html              # abre dashboard local
+```
+
+### Debug de una acción
+```bash
+# Editar TICKER_TO_DEBUG en debug_stock.py
+python debug_stock.py
+```
+
+Muestra paso a paso: estado mercado → VPVR → S1 → confluencia → Spring → Test → Riesgo → Score.
+
+### CI/CD (GitHub Actions)
+Se ejecuta automáticamente cada día laborable a las 01:00 UTC (5h tras cierre US), genera el análisis completo y despliega a GitHub Pages.
+
+---
+
+## 📁 Estructura del JSON de salida
+
+```json
+{
+  "market_context": {
+    "healthy": true,
+    "status_label": "ALCISTA ✅",
+    "health_score": 14.3
+  },
+  "summary": {
+    "springs_detected": 12,    // operables (no fallidos ni caducos)
+    "springs_failed": 8,        // invalidados
+    "springs_stale": 5,         // sin Test >30 días
+    "tests_active": 3           // en zona de entrada AHORA
+  },
+  "top_picks": [
+    {
+      "rank": 1,
+      "symbol": "XYZ",
+      "wyckoff_score": 85.5,
+      "probability_score": 52.0,
+      "potential_score": 33.5,
+      "entry_status": { "status": "Test Activo - ENTRADA", "icon": "🎯" },
+      "spring": { "date": "2026-05-15", "low": 12.45, "vol_ratio": 2.8 },
+      "risk_management": {
+        "entry_price": 12.97,
+        "sl": 11.83,
+        "tp1": 15.40,
+        "tp2": 17.82,
+        "rr_tp2": 4.2,
+        "current_to_sl_pct": 8.5
+      }
+    }
+  ]
+}
+```
+
+---
+
+## ⚠️ Disclaimer
+
+Herramienta de análisis técnico **educativa**, no constituye recomendación de inversión. El trading implica riesgo de pérdida total. Verifica siempre los setups manualmente antes de operar.

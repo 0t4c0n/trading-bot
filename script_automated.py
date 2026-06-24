@@ -23,6 +23,8 @@ class WyckoffSpringScreener:
                                                # (gradiente de score interno preserva calidad)
         self.TEST_TOLERANCE = 0.005   # 0.5% por encima de S1 para Test
         self.SPRING_MAX_AGE_WITHOUT_TEST = 30  # Días máx. desde Spring sin Test antes de caducar
+        self.MIN_PRICE = 5.0          # Excluir penny stocks (<$5): spreads enormes,
+                                       # alta manipulación, ruido y riesgo desproporcionado
         self.MIN_DATA_POINTS = 260    # Mínimo de velas diarias requeridas
         self.symbol_industries = {}
         self.session = requests.Session()
@@ -738,6 +740,11 @@ class WyckoffSpringScreener:
             return result
 
         result['current_price'] = float(df['Close'].iloc[-1])
+
+        # Filtro penny stocks: precio < $5 → ruido, spreads enormes, manipulación
+        if result['current_price'] < self.MIN_PRICE:
+            result['entry_status'] = f'Filtrado (penny stock <${self.MIN_PRICE:.0f})'
+            return result
 
         # Paso 1: Volume Profile
         poc, hvn_list = self.calculate_volume_profile(df)
