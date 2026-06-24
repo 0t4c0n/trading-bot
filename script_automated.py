@@ -398,17 +398,22 @@ class WyckoffSpringScreener:
 
     def detect_test_signal(self, df, spring_idx, s1):
         """
-        Tras el Spring, detecta el retroceso de test hacia S1 con volumen
-        decreciente y por debajo de SMA(20). Retorna el Test más reciente.
+        Tras el Spring, detecta el retroceso secundario de Test hacia S1
+        con volumen decreciente y por debajo de SMA(20).
+        Empieza la búsqueda DOS días después del Spring porque:
+          - El día siguiente al Spring no es un retroceso secundario válido
+          - Compararíamos volumen vs el Spring (anómalamente alto) → falso positivo
+        Retorna el Test más reciente.
         """
-        if spring_idx is None or spring_idx >= len(df) - 1:
+        # Necesitamos al menos 2 días tras el Spring (Spring + rally + retest mínimo)
+        if spring_idx is None or spring_idx >= len(df) - 2:
             return None
 
         vol_sma = df['Volume'].rolling(20).mean()
         tol = self.TEST_TOLERANCE
         latest_test = None
 
-        for i in range(spring_idx + 1, len(df)):
+        for i in range(spring_idx + 2, len(df)):
             row = df.iloc[i]
             sma_vol = float(vol_sma.iloc[i]) if pd.notna(vol_sma.iloc[i]) else 0.0
             if sma_vol <= 0:
@@ -420,6 +425,7 @@ class WyckoffSpringScreener:
             )
 
             if price_in_zone and float(row['Volume']) < sma_vol:
+                # Comparar con vela anterior (ya no es el Spring porque empezamos en +2)
                 vol_declining = float(row['Volume']) < float(df['Volume'].iloc[i - 1])
                 if vol_declining:
                     latest_test = {
@@ -579,7 +585,12 @@ class WyckoffSpringScreener:
             atr_series  = self.calculate_atr(df)
             spring_atr  = float(atr_series.iloc[spring_idx])
             if not np.isfinite(spring_atr) or spring_atr <= 0:
-                spring_atr = float(atr_series.dropna().iloc[-1])
+                atr_clean = atr_series.dropna()
+                if atr_clean.empty:
+                    return None  # No se puede calcular SL sin ATR válido
+                spring_atr = float(atr_clean.iloc[-1])
+                if spring_atr <= 0:
+                    return None
 
             sl   = spring_info['low'] - 0.5 * spring_atr
             risk = max(entry_price - sl, 1e-6)

@@ -287,13 +287,13 @@ def create_wyckoff_dashboard_data():
                         "obv_positive":    safe_float(row.get('OBV_Trend_Base', 0)) > 0,
                     },
 
-                    # Test
+                    # Test — timing_days es None si no hay Test (evita "0d" engañoso)
                     "test": {
                         "detected":      safe_bool(row.get('Test_Detected', False)),
                         "date":          str(row.get('Test_Date', '')),
                         "volume_ratio":  safe_float(row.get('Test_Volume_Ratio', 0)),
                         "timing_days":   int(safe_float(row.get('Test_Timing_Days', 0)))
-                                         if row.get('Test_Timing_Days') not in ('', None) else None,
+                                         if safe_bool(row.get('Test_Detected', False)) else None,
                         "timing_score":  safe_float(row.get('Test_Timing_Score', 0)),
                     },
 
