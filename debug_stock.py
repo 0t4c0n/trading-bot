@@ -1,127 +1,175 @@
-# debug_stock.py
+# debug_stock.py - Wyckoff Spring Debug Tool (con scoring dual Probabilidad + Potencial)
 import yfinance as yf
 import pandas as pd
-import json
-from pprint import pprint
-# Importa la clase principal desde tu script original
-from script_automated import MinerviniStockScreener
+import warnings
+warnings.filterwarnings('ignore')
 
-# --- CONFIGURACIÓN ---
-# ▼▼▼ ¡AQUÍ ES DONDE PONES LA ACCIÓN QUE QUIERES DEBUGEAR! ▼▼▼
-TICKER_TO_DEBUG = "ASA"  # Cambia "NVDA" por el símbolo que quieras analizar
-# --- FIN DE LA CONFIGURACIÓN ---
+from script_automated import WyckoffSpringScreener
 
-def calculate_real_rs_rating(stock_df, benchmark_df):
-    """Calcula un RS Rating realista comparando el rendimiento del último año contra un benchmark (SPY)."""
-    if len(stock_df) < 252 or len(benchmark_df) < 252:
-        print("   ⚠️  Datos insuficientes para calcular RS Rating real. Usando 50 como valor por defecto.")
-        return 50.0
+# ▼▼▼ ELIGE LA ACCIÓN A ANALIZAR ▼▼▼
+TICKER_TO_DEBUG = "INTC"
+# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-    # Rendimiento del último año (252 días de trading)
-    stock_perf = (stock_df['Close'].iloc[-1] / stock_df['Close'].iloc[-252]) - 1
-    benchmark_perf = (benchmark_df['Close'].iloc[-1] / benchmark_df['Close'].iloc[-252]) - 1
-    
-    # Fórmula simple para un RS Rating proxy: 50 es igual al mercado.
-    # Cada 1% de rendimiento superior al mercado suma 1 punto al RS.
-    rs_rating = 50.0 + (stock_perf - benchmark_perf) * 100
-    
-    print(f"   - Rendimiento {TICKER_TO_DEBUG} (1A): {stock_perf:.2%}")
-    print(f"   - Rendimiento SPY (1A): {benchmark_perf:.2%}")
-    
-    # Limitar el RS Rating a un rango realista (1-99)
-    return max(1, min(99, rs_rating))
 
-def debug_single_stock(symbol):
-    """
-    Ejecuta el análisis Minervini en modo DEBUG para una única acción.
-    """
-    print(f"🕵️  Iniciando debug para: {symbol}")
-    print("-" * 40)
+def debug_wyckoff_stock(symbol):
+    print(f"=== WYCKOFF SPRING DEBUG: {symbol} ===\n")
+    screener = WyckoffSpringScreener()
 
-    screener = MinerviniStockScreener()
-    
-    # 1. Descargar datos históricos para la acción
-    print(f"1. Descargando datos históricos ('2y') para {symbol} y benchmark (SPY)...")
+    # 1. Descargar datos
+    print(f"Descargando datos (2 años) para {symbol} y ^GSPC...")
     try:
-        # Descargar ambos tickers a la vez es más eficiente
-        # yfinance devuelve un DataFrame con columnas de varios niveles: (Métrica, Ticker)
-        # ej., ('Close', 'ASA'), ('Open', 'ASA'), ('Close', 'SPY')
-        data = yf.download([symbol, 'SPY'], period="2y", auto_adjust=True, progress=False)
-        hist_df = data.xs(symbol, level=1, axis=1)
-        spy_df = data.xs('SPY', level=1, axis=1)
-        
-        if hist_df.empty or len(hist_df) < 252 or spy_df.empty:
-            print(f"❌ Error: No se pudieron descargar suficientes datos para {symbol}. Se necesitan al menos 252 días.")
+        data = yf.download([symbol, '^GSPC'], period='2y', auto_adjust=True, progress=False)
+        hist_df = data.xs(symbol,   level=1, axis=1).dropna()
+        spy_df  = data.xs('^GSPC',  level=1, axis=1).dropna()
+        if hist_df.empty or len(hist_df) < screener.MIN_DATA_POINTS:
+            print(f"❌ Datos insuficientes ({len(hist_df)} velas, mínimo {screener.MIN_DATA_POINTS})")
             return
-        print("✓ Datos históricos descargados.")
+        print(f"✓ {len(hist_df)} velas ({hist_df.index[0].date()} → {hist_df.index[-1].date()})\n")
     except Exception as e:
-        print(f"❌ Error al descargar datos históricos: {e}")
+        print(f"❌ Error descargando datos: {e}")
         return
 
-    # 1.5. Calcular RS Rating real
-    print("1.5. Calculando RS Rating real vs. SPY...")
-    rs_rating = calculate_real_rs_rating(hist_df, spy_df)
-    print(f"📊 RS Rating calculado para {symbol}: {rs_rating:.1f} (el filtro requiere >= 70)")
+    current_price = float(hist_df['Close'].iloc[-1])
 
-    # 2. Descargar información fundamental (.info) - Siempre en vivo para el debug
-    print(f"2. Descargando datos fundamentales (.info) para {symbol} (llamada en vivo)...")
+    # 2. Estado del mercado
+    print("--- ESTADO DEL MERCADO ---")
+    market_healthy, market_health_score = screener.check_market_health(spy_df)
+    status = "ALCISTA ✅" if market_healthy else "BAJISTA ⚠️"
+    print(f"  S&P 500: {status} | Score: {market_health_score}/15")
+    if not market_healthy:
+        print(f"  ⚠️  Mercado bajista — Springs menos fiables. Considerar esperar.")
+
+    # 3. RS Rating estimado
+    print(f"\n--- RS RATING ---")
+    rs_rating = 50.0
     try:
-        # Usamos yf.Ticker para obtener el .info
-        ticker_info = yf.Ticker(symbol).info
-        if not ticker_info or 'sector' not in ticker_info:
-            print(f"❌ Error: .info devuelto vacío o incompleto para {symbol}.")
-            ticker_info = {}
-        print("✓ Datos fundamentales descargados.")
-    except Exception as e:
-        print(f"❌ Error al descargar .info: {e}")
-        ticker_info = {}
+        if len(hist_df) >= 252 and len(spy_df) >= 252:
+            def _rs(df):
+                c = df['Close']
+                p3   = ((c.iloc[-1]/c.iloc[-63])-1)*100
+                p_q2 = ((c.iloc[-63]/c.iloc[-126])-1)*100
+                p_q3 = ((c.iloc[-126]/c.iloc[-189])-1)*100
+                p_q4 = ((c.iloc[-189]/c.iloc[-252])-1)*100
+                return 0.4*p3 + 0.2*p_q2 + 0.2*p_q3 + 0.2*p_q4
+            rs_rating = max(1.0, min(99.0, 50.0 + (_rs(hist_df) - _rs(spy_df))))
+            print(f"  RS Rating estimado: {rs_rating:.1f}/100")
+    except Exception:
+        print(f"  RS Rating: {rs_rating:.1f} (fallback)")
 
-    # 2.5. Verificar datos fundamentales clave
-    print("2.5. Verificando disponibilidad de datos fundamentales clave...")
-    required_keys = ['earningsQuarterlyGrowth', 'returnOnEquity', 'netIncomeToCommon']
-    missing_keys = [key for key in required_keys if key not in ticker_info or ticker_info[key] is None]
-    
-    if missing_keys:
-        print(f"   ⚠️  AVISO: Faltan datos fundamentales clave en la respuesta de la API:")
-        for key in missing_keys:
-            print(f"      - '{key}' no encontrado o es None.")
-        print("   Esto causará que los filtros fundamentales fallen, lo cual es el comportamiento esperado.")
+    # 4. Volume Profile
+    print(f"\n--- VOLUME PROFILE ({screener.VOL_LOOKBACK} días) ---")
+    poc, hvn_list = screener.calculate_volume_profile(hist_df)
+    print(f"  Precio actual: ${current_price:.2f}")
+    print(f"  POC:           ${poc:.2f}" if poc else "  POC:           N/A")
+    print(f"  HVNs:          {len(hvn_list)}")
+    if hvn_list:
+        nearest = sorted(hvn_list, key=lambda h: abs(h - current_price))[:4]
+        print(f"  4 HVN más cercanos: {[round(h,2) for h in nearest]}")
+
+    # 5. Soporte estructural
+    print(f"\n--- SOPORTE ESTRUCTURAL S1 ({screener.SUPPORT_LOOKBACK} días) ---")
+    s1 = screener.find_structural_support(hist_df)
+    print(f"  S1: ${s1:.2f}  (precio {((current_price-s1)/s1*100):+.1f}% sobre S1)")
+
+    # 6. Confluencia
+    print(f"\n--- CONFLUENCIA S1 ↔ Volume Profile ---")
+    conf_valid, conf_score, nearest_level = screener.check_s1_confluence(s1, poc, hvn_list)
+    if conf_valid:
+        dist = abs(s1 - nearest_level) / nearest_level * 100
+        tipo = "POC" if nearest_level == poc else "HVN"
+        print(f"  ✅ VÁLIDA | Score: {conf_score}/30 | {tipo}: ${nearest_level:.2f} ({dist:.2f}% de distancia)")
     else:
-        print("✓ Todos los datos fundamentales clave están presentes.")
+        if poc:
+            dist_poc = abs(s1 - poc) / poc * 100
+            print(f"  ❌ Sin confluencia | POC a {dist_poc:.2f}% de S1 (límite: 1%)")
+        if hvn_list:
+            nhvn = min(hvn_list, key=lambda h: abs(h - s1))
+            print(f"  ❌ HVN más cercano a S1: ${nhvn:.2f} ({abs(s1-nhvn)/nhvn*100:.2f}%)")
+        print("  ⛔ Sin confluencia → Spring no aplica según metodología")
 
-    # 3. Calcular Medias Móviles
-    print("3. Calculando Medias Móviles (50, 150, 200)...")
-    hist_with_ma = screener.calculate_moving_averages(hist_df)
-    print("✓ Medias Móviles calculadas.")
+    # 7. Spring
+    print(f"\n--- SPRING WYCKOFF (Fase C) ---")
+    spring_info = screener.detect_spring(hist_df, s1) if conf_valid else None
+    if spring_info:
+        print(f"  ✅ SPRING DETECTADO")
+        print(f"     Fecha:     {spring_info['date']}")
+        print(f"     Low:       ${spring_info['low']:.2f}  (S1=${s1:.2f}, -"
+              f"{spring_info['spring_depth_pct']:.3f}%)")
+        print(f"     Close:     ${spring_info['close']:.2f}")
+        print(f"     Cierre:    {spring_info['close_position']*100:.1f}% del rango (≥67% req.)")
+        print(f"     Volumen:   {spring_info['vol_ratio']}× SMA(20) (≥{screener.FILTER_VOLUMEN}× req.)")
+    elif conf_valid:
+        print(f"  ❌ Sin Spring en últimos {screener.SUPPORT_LOOKBACK} días")
+        print(f"     Cond.: Low<${s1:.2f} AND Close>${s1:.2f} AND cierre≥67% AND vol≥{screener.FILTER_VOLUMEN}×SMA20")
 
-    # 4. Ejecutar el análisis Minervini
-    print("\n" + "="*15 + f" INICIANDO ANÁLISIS MINERVINI PARA {symbol} " + "="*15)
-    analysis_result = screener.get_minervini_analysis(
-        df=hist_with_ma, 
-        rs_rating=rs_rating, 
-        ticker_info=ticker_info, 
-        symbol=symbol,
-        debug_mode=True  # <-- ¡AQUÍ ESTÁ LA MAGIA!
+    # 8. Calidad de la base (solo si hay Spring)
+    if spring_info:
+        spring_idx = spring_info['index']
+        print(f"\n--- CALIDAD DE LA BASE ---")
+        obv = screener.calculate_obv_trend_in_base(hist_df, spring_idx)
+        base_w = screener.calculate_base_width(hist_df, spring_idx, s1)
+        print(f"  OBV trend en base: {obv:.4f}  "
+              f"({'✅ Acumulación (compra neta)' if obv > 0 else '❌ Distribución (venta neta)'})")
+        print(f"  Anchura de base:   {base_w} días en rango S1±20%  "
+              f"({'✅ Causa sólida' if base_w >= 50 else '⚠️ Base estrecha' if base_w >= 20 else '❌ Base muy corta'})")
+
+    # 9. Test / Gatillo de entrada
+    print(f"\n--- TEST / GATILLO DE ENTRADA ---")
+    if spring_info:
+        test_info = screener.detect_test_signal(hist_df, spring_info['index'], s1)
+        timing_score = screener.score_test_timing(
+            spring_info['index'],
+            test_info['index'] if test_info else None
+        )
+        if test_info:
+            days = test_info['index'] - spring_info['index']
+            tag = "🎯 ACTIVO — SEÑAL DE ENTRADA" if test_info.get('is_current') else "✅ Completado"
+            print(f"  {tag}")
+            print(f"  Fecha:     {test_info['date']}  ({days} días tras Spring)")
+            print(f"  Close:     ${test_info['close']:.2f}")
+            print(f"  Volumen:   {test_info['vol_ratio']}× SMA(20)  (debe ser <1.0)")
+            print(f"  Timing:    {timing_score}/20 pts  "
+                  f"({'ideal (5-25d)' if 5<=days<=25 else 'ligeramente tarde' if days<=40 else 'tarde'})")
+        else:
+            print(f"  ⚡ Spring OK — esperando retroceso a S1 (±0.5%) con volumen bajo")
+            print(f"  Timing score si llega hoy: {timing_score}/20 pts")
+    else:
+        print("  — (requiere Spring previo)")
+
+    # 10. Gestión de riesgo
+    print(f"\n--- GESTIÓN DE RIESGO ---")
+    if spring_info:
+        rp = screener.calculate_risk_params(spring_info, hist_df, s1, hvn_list)
+        if rp:
+            print(f"  Entrada estimada: ${rp['entry_price']:.2f}  (S1 × 1.002)")
+            print(f"  Stop Loss:        ${rp['sl']:.4f}  ({rp['risk_pct']:.2f}% de riesgo) ← Spring Low − 0.5×ATR14")
+            print(f"  TP1 (50%):        ${rp['tp1']:.2f}  → R:R 1:{rp['rr_tp1']:.2f}  ← resistencia local 60d")
+            print(f"  TP2 (50%):        ${rp['tp2']:.2f}  → R:R 1:{rp['rr_tp2']:.2f}  ← HVN superior / R:R 3.5")
+            print(f"  ATR(14):          {rp['atr']:.4f}")
+    else:
+        print("  — (requiere Spring detectado)")
+
+    # 11. Scoring final dual
+    print(f"\n--- WYCKOFF SCORE DUAL ---")
+    analysis = screener.analyze_wyckoff_stock(
+        symbol, hist_df, rs_rating,
+        market_healthy=market_healthy,
+        market_health_score=market_health_score,
+        industry_rank=50.0
     )
-    print("="*17 + " ANÁLISIS MINERVINI COMPLETADO " + "="*17 + "\n")
+    prob  = analysis['probability_score']
+    pot   = analysis['potential_score']
+    total = analysis['wyckoff_score']
+    print(f"  Probabilidad:  {prob:.1f}/60  (mercado + test timing + OBV + sector)")
+    print(f"  Potencial:     {pot:.1f}/40   (base width + R:R + shake-out depth)")
+    print(f"  TOTAL:         {total:.1f}/100")
+    print(f"  Estado:        {analysis['entry_status']}")
 
-    # 5. Mostrar los resultados de forma clara
-    print(f"✅ RESUMEN FINAL PARA: {TICKER_TO_DEBUG} ✅")
-    print("-" * 40)
+    print(f"\n{'='*55}")
+    print(f"  {symbol} | ${current_price:.2f} | RS:{rs_rating:.0f} | "
+          f"Score:{total:.1f}/100 | {analysis['entry_status']}")
+    print(f"{'='*55}\n")
 
-    if analysis_result is None:
-        print("‼️  ACCIÓN DESCARTADA POR COMPLETO.")
-        print("   Razón principal: Beneficios negativos o nulos. El script está configurado para ignorar estas acciones.")
-        return
-    
-    print(f"  - ¿Pasa TODOS los filtros?: {'SÍ' if analysis_result.get('passes_all_filters') else 'NO'}")
-    print(f"  - Razón final del filtro: {analysis_result.get('filter_reasons', ['N/A'])[0]}")
-    print(f"  - Stage Analysis: {analysis_result.get('stage_analysis', 'N/A')}")
-    print(f"  - Minervini Score calculado: {analysis_result.get('minervini_score', 'N/A')}")
-    print(f"  - Señal de Entrada: {analysis_result.get('entry_signal', 'N/A')}")
 
 if __name__ == "__main__":
-    if not TICKER_TO_DEBUG or TICKER_TO_DEBUG == "TICKER_AQUÍ":
-        print("Por favor, edita este script y cambia la variable 'TICKER_TO_DEBUG' por la acción que quieres analizar.")
-    else:
-        debug_single_stock(TICKER_TO_DEBUG)
+    debug_wyckoff_stock(TICKER_TO_DEBUG)

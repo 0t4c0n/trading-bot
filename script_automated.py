@@ -1,105 +1,75 @@
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import requests
 import time
-from datetime import datetime, timedelta
-import json
-from io import StringIO
-import os
+from datetime import datetime
 from tqdm import tqdm
 
-class MinerviniStockScreener:
+
+class WyckoffSpringScreener:
     def __init__(self):
         self.stock_symbols = []
-        # --- CONSTANTES DE FILTRADO MINERVINI ---
-        # Hacer estos valores configurables facilita el ajuste de la sensibilidad del screener.
-        self.MIN_RS_RATING = 70
-        self.MIN_PCT_ABOVE_LOW = 30.0  # El precio debe estar al menos un 30% por encima del mínimo de 52s.
-        self.MAX_PCT_BELOW_HIGH = 25.0 # El precio debe estar a menos del 25% del máximo de 52s.
-        self.MIN_EARNINGS_GROWTH = 0.25 # Crecimiento trimestral de beneficios (YoY) >= 25%
-        self.MIN_REVENUE_GROWTH = 0.20  # Crecimiento de ingresos >= 20%
-        self.MIN_ROE = 0.17             # Retorno sobre el patrimonio (ROE) >= 17%
-        # --- CONSTANTES PARA EXCEPCIÓN DE LÍDERES DE MERCADO ---
-        # Permite que acciones muy fuertes pasen el filtro del 30% sobre el mínimo si están muy cerca de máximos.
-        # VCP y acumulación solo afectan al score, no filtran. Se revisan manualmente en los gráficos.
-        self.STRONG_LEADER_MAX_PCT_BELOW_HIGH = 5.0 # Debe estar a menos del 5% del máximo de 52s.
-        self.STRONG_LEADER_MIN_RS = 85              # Y tener un RS Rating superior a 85.
-        # --- CONSTANTES PARA FILTRO DE CRECIMIENTO INTELIGENTE ---
-        self.EXCEPTIONAL_EARNINGS_GROWTH = 0.40 # Umbral para "centrales de productividad"
-        self.DECENT_REVENUE_GROWTH = 0.10       # Requisito de ingresos más bajo para esas centrales
-        # --- CONSTANTES PARA ANÁLISIS DE PATRONES (VCP) ---
-        self.VCP_MAX_PCT_FROM_HIGH = 0.15       # % máximo desde el máximo de 52s para ser considerado en contexto
-        self.VCP_VOLATILITY_TIGHTENING_RATIO = 0.6 # La volatilidad de 10d debe ser <60% de la de 50d
-        self.VCP_VOLUME_DRY_UP_DAYS = 10        # Días para analizar la sequía de volumen
-        self.VCP_VOLUME_DRY_UP_MIN_DAYS = 5     # Mínimo de días con volumen bajo
-        self.VCP_PIVOT_RANGE_DAYS = 5           # Días para analizar el rango de pivote
-        self.VCP_PIVOT_MAX_PRICE_RANGE = 0.025  # Rango de precio máximo (<2.5%) para un pivote
-        # --- SESIÓN DE RED COMPARTIDA PARA ROBUSTEZ ---
-        # --- PARÁMETROS PARA REBOTE EN MEDIAS MÓVILES ---
-        self.BOUNCE_PARAMS = {
-            50: {'uptrend_days': 20, 'touch_days': 10, 'touch_proximity': 0.03, 'bounce_limit': 0.07},
-            21: {'uptrend_days': 10, 'touch_days': 5, 'touch_proximity': 0.02, 'bounce_limit': 0.05}
-        }
+        # Parámetros Wyckoff Spring (Swing Trading Macro — Gráfico Diario)
+        self.VOL_LOOKBACK = 252       # 1 año para Volume Profile (VPVR)
+        self.SUPPORT_LOOKBACK = 130   # ~6 meses de historia para soporte estructural S1
+        self.SPRING_SEARCH_WINDOW = 60  # Últimos 60 días donde buscar el Spring
+                                        # (S1 debe estar establecido ANTES de la ventana de Spring)
+        self.FILTER_VOLUMEN = 1.5     # Multiplicador SMA(20) para validar Spring
+        self.ATR_PERIOD = 14          # Período ATR para Stop Loss
+        self.VP_BINS = 100            # Bins del Volume Profile
+        self.HVN_THRESHOLD = 1.5      # Multiplicador sobre media para HVN
+        self.S1_CONFLUENCE_TOLERANCE = 0.015  # 1.5% tolerancia S1 cerca de POC/HVN
+                                               # (gradiente de score interno preserva calidad)
+        self.TEST_TOLERANCE = 0.005   # 0.5% por encima de S1 para Test
+        self.SPRING_MAX_AGE_WITHOUT_TEST = 30  # Días máx. desde Spring sin Test antes de caducar
+        self.MIN_DATA_POINTS = 260    # Mínimo de velas diarias requeridas
         self.symbol_industries = {}
         self.session = requests.Session()
 
+    # =================== OBTENCIÓN DE SÍMBOLOS ===================
+
     def get_nyse_nasdaq_symbols(self):
-        """Obtiene símbolos de NYSE y NASDAQ combinados"""
+        """Obtiene símbolos de NYSE y NASDAQ combinados."""
         try:
             nyse_symbols = self.get_exchange_symbols('NYSE')
             nasdaq_symbols = self.get_exchange_symbols('NASDAQ')
-            
-            # Combinar y eliminar duplicados ya se hace en el flujo principal
             return list(set(nyse_symbols + nasdaq_symbols))
-            
         except Exception as e:
             print(f"Error obteniendo símbolos: {e}")
-            backup_symbols = self.get_backup_symbols()
-            print(f"Usando lista de respaldo: {len(backup_symbols)} símbolos")
-            return backup_symbols
-    
+            backup = self.get_backup_symbols()
+            print(f"Usando lista de respaldo: {len(backup)} símbolos")
+            return backup
+
     def get_exchange_symbols(self, exchange):
-        """Obtiene símbolos de un exchange específico (NYSE o NASDAQ)"""
+        """Obtiene símbolos de NYSE o NASDAQ desde la API de NASDAQ."""
         try:
             url = "https://api.nasdaq.com/api/screener/stocks"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            params = {
-                'tableonly': 'true',
-                'limit': '25000',
-                'exchange': exchange
-            }
-            
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            params = {'tableonly': 'true', 'limit': '25000', 'exchange': exchange}
             response = self.session.get(url, headers=headers, params=params, timeout=15)
-            
             if response.status_code == 200:
                 data = response.json()
                 if 'data' in data and 'table' in data['data']:
                     rows = data['data']['table']['rows']
-                    # La API ya no devuelve 'assetType', asumimos que todos son stocks.
-                    # El filtro secundario en main() limpiará los tickers no deseados.
                     symbols = []
                     for row in rows:
                         sym = row['symbol']
                         symbols.append(sym)
                         self.symbol_industries[sym] = {
+                            'name': row.get('name', '') or '',
                             'industry': row.get('industry', 'Unknown') or 'Unknown',
-                            'sector': row.get('sector', 'Unknown') or 'Unknown'
+                            'sector': row.get('sector', 'Unknown') or 'Unknown',
                         }
-
                     print(f"  Obtenidos {len(symbols)} símbolos de {exchange}.")
                     return symbols
-            
             return []
-            
         except Exception as e:
             print(f"Error obteniendo símbolos de {exchange}: {e}")
             return []
-    
+
     def get_backup_symbols(self):
-        """Lista de respaldo con principales acciones de NYSE y NASDAQ"""
+        """Lista de respaldo con principales acciones de NYSE y NASDAQ."""
         nyse_major = [
             'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'AXP', 'USB', 'PNC', 'TFC',
             'COF', 'SCHW', 'BLK', 'SPGI', 'ICE', 'CME', 'MCO', 'AON', 'MMC',
@@ -111,9 +81,8 @@ class MinerviniStockScreener:
             'DHR', 'TMO', 'A', 'SYK', 'BSX', 'EW', 'HOLX', 'ZBH', 'BAX', 'BDX',
             'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'PXD', 'KMI', 'OKE', 'WMB', 'EPD',
             'ET', 'MPLX', 'PSX', 'VLO', 'MPC', 'HES', 'DVN', 'FANG', 'APA',
-            'T', 'VZ', 'CMCSA', 'CHTR', 'TMUS', 'S'
+            'T', 'VZ', 'CMCSA', 'CHTR', 'TMUS', 'S',
         ]
-        
         nasdaq_major = [
             'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'TSLA', 'META', 'NFLX',
             'NVDA', 'ADBE', 'PYPL', 'INTC', 'CSCO', 'AVGO', 'TXN', 'QCOM',
@@ -122,1316 +91,1014 @@ class MinerviniStockScreener:
             'GILD', 'REGN', 'VRTX', 'BMRN', 'AMGN',
             'BKNG', 'EBAY', 'SBUX', 'ROST', 'ULTA', 'LULU', 'NTES', 'JD',
             'BABA', 'PDD', 'MELI', 'SE', 'SHOP', 'SQ', 'ROKU', 'SPOT',
-            'AMD', 'ADI', 'KLAC', 'LRCX',
-            'AMAT', 'MU', 'MRVL', 'SWKS', 'MCHP', 'NXPI', 'TSM',
-            'UBER', 'LYFT', 'DASH', 'ABNB',
-            'TDOC', 'PTON', 'PINS', 'SNAP'
+            'AMD', 'ADI', 'KLAC', 'LRCX', 'AMAT', 'MU', 'MRVL', 'SWKS',
+            'MCHP', 'NXPI', 'TSM', 'UBER', 'LYFT', 'DASH', 'ABNB',
+            'TDOC', 'PTON', 'PINS', 'SNAP',
         ]
-        
-        all_backup = list(set(nyse_major + nasdaq_major))
-        return all_backup
-    
-    def calculate_moving_averages(self, df):
-        """Calcula las medias móviles de 10, 21, 50, 150 y 200 días"""
+        return list(set(nyse_major + nasdaq_major))
+
+    # =================== DESCARGA DE DATOS ===================
+
+    def download_all_data(self, symbols, period="2y"):
+        """Descarga datos históricos en lotes con reintentos y backoff."""
+        print(f"Iniciando descarga robusta para {len(symbols)} símbolos...")
+        all_data = {}
+        batch_size = 75
+        total_batches = (len(symbols) + batch_size - 1) // batch_size
+
+        for i in tqdm(range(total_batches), desc="Descargando datos históricos", unit="lote"):
+            start_idx = i * batch_size
+            batch_symbols = symbols[start_idx:start_idx + batch_size]
+            success = False
+
+            for attempt in range(3):
+                try:
+                    batch_data = yf.download(
+                        batch_symbols, period=period, group_by='ticker',
+                        auto_adjust=True, threads=True, progress=False, timeout=30
+                    )
+                    for symbol in batch_symbols:
+                        if symbol in batch_data.columns:
+                            df = batch_data[symbol].dropna()
+                            if isinstance(df.columns, pd.MultiIndex):
+                                df.columns = df.columns.droplevel(-1)
+                            if not df.empty:
+                                all_data[symbol] = df
+                    success = True
+                    break
+                except Exception as e:
+                    wait_time = 10 * (2 ** attempt)
+                    print(f"  ⚠️ Error lote {i+1}: {e}. Reintentando en {wait_time}s...")
+                    time.sleep(wait_time)
+
+            if not success:
+                print(f"  ❌ Lote {i+1} falló después de 3 intentos.")
+
+        print(f"\n✓ Descarga de acciones completada: {len(all_data)} símbolos.")
+
+        # Descargar S&P 500 como referencia de mercado y para RS
+        print("Descargando índice de referencia (^GSPC)...")
         try:
-            df['MA_10'] = df['Close'].rolling(window=10).mean()
-            df['MA_21'] = df['Close'].rolling(window=21).mean()
-            df['MA_50'] = df['Close'].rolling(window=50).mean()
-            df['MA_150'] = df['Close'].rolling(window=150).mean()
-            df['MA_200'] = df['Close'].rolling(window=200).mean()
-            
-            return df
+            spy_data = yf.download('^GSPC', period=period, auto_adjust=True, progress=False, timeout=30)
+            if not spy_data.empty:
+                if isinstance(spy_data.columns, pd.MultiIndex):
+                    spy_data.columns = spy_data.columns.droplevel(-1)
+                all_data['_MARKET_INDEX'] = spy_data
+                print("✓ ^GSPC descargado correctamente.")
         except Exception as e:
-            print(f"Error calculando medias móviles: {e}")
-            return df
-    
-    def calculate_52_week_range(self, df):
-        """Calcula máximo y mínimo de 52 semanas"""
-        try:
-            weeks_52 = 252  # ~52 semanas de trading
-            
-            recent_data = df.tail(weeks_52)
-            high_52w = recent_data['High'].max()
-            low_52w = recent_data['Low'].min()
-            
-            return high_52w, low_52w
-        except Exception as e:
-            print(f"Error calculando 52-week range: {e}")
-            return None, None
-    
-    def analyze_vcp_characteristics(self, df, high_52w, volume_50d_avg):
-        """Análisis multifactorial de VCP (Volatility Contraction Pattern)"""
-        try:
-            if len(df) < 60 or not high_52w or not volume_50d_avg:
-                return {'vcp_detected': False, 'details': ['Datos insuficientes']}
-
-            current_price = df['Close'].iloc[-1]
-            
-            # 1. CONTEXTO: Cerca del máximo de 52 semanas
-            price_near_high = (high_52w - current_price) / high_52w <= self.VCP_MAX_PCT_FROM_HIGH
-            if not price_near_high:
-                return {'vcp_detected': False, 'is_in_pivot': False, 'details': ['No está cerca del máximo 52w']}
-            
-            # 2. CONTRACCIÓN DE VOLATILIDAD (VCP - Ingrediente #1): El resorte se comprime.
-            # Volatilidad en los últimos 10 días vs los últimos 50 días
-            vol_10d = (df['High'].tail(self.VCP_VOLUME_DRY_UP_DAYS).max() - df['Low'].tail(self.VCP_VOLUME_DRY_UP_DAYS).min()) / df['Close'].tail(self.VCP_VOLUME_DRY_UP_DAYS).mean()
-            vol_50d = (df['High'].tail(50).max() - df['Low'].tail(50).min()) / df['Close'].tail(50).mean()
-            
-            volatility_tightening = vol_10d < (vol_50d * self.VCP_VOLATILITY_TIGHTENING_RATIO)
-
-            # 3. SEQUÍA DE VOLUMEN (LÓGICA MEJORADA): Los vendedores se agotan.
-            # En lugar de una media, contamos el número de días con volumen por debajo del promedio.
-            # Esto es más robusto contra picos de volumen aislados.
-            low_volume_days = df['Volume'].tail(self.VCP_VOLUME_DRY_UP_DAYS) < volume_50d_avg
-            # Requerimos que al menos un número de días tengan volumen bajo.
-            volume_dry_up = low_volume_days.sum() >= self.VCP_VOLUME_DRY_UP_MIN_DAYS
-            
-            # 4. PUNTO PIVOTE (La calma antes de la explosión): Rango de precio ultra-estrecho.
-            # El precio se mueve lateralmente en un rango muy ajustado en los últimos días.
-            price_range_5d = (df['High'].tail(self.VCP_PIVOT_RANGE_DAYS).max() - df['Low'].tail(self.VCP_PIVOT_RANGE_DAYS).min()) / current_price
-            is_in_tight_range = price_range_5d < self.VCP_PIVOT_MAX_PRICE_RANGE
-
-            # --- LÓGICA DE DECISIÓN ---
-            # Se considera que hay un patrón VCP general si la volatilidad se contrae Y el volumen se seca.
-            vcp_detected = volatility_tightening and volume_dry_up
-            
-            # Se considera que está en un PUNTO PIVOTE accionable si se cumplen las condiciones de VCP
-            # Y ADEMÁS el precio está en ese rango ultra-estrecho. Esta es la señal de mayor calidad.
-            is_in_pivot = vcp_detected and is_in_tight_range
-            
-            details = []
-            if volatility_tightening: details.append(f"Volatilidad contraída (10d: {vol_10d:.2%}, 50d: {vol_50d:.2%})")
-            if volume_dry_up: details.append(f"Volumen seco ({low_volume_days.sum()}/10 días < media)")
-            if is_in_tight_range: details.append("Rango estrecho (<3% en 5d)")
-            if is_in_pivot: details.append("✅ SEÑAL PIVOTE ACTIVA")
-
-            # 5. VOLUMEN EN EL BREAKOUT: Solo aplica cuando está en el pivote
-            current_volume = df['Volume'].iloc[-1]
-            high_volume_breakout = is_in_pivot and (current_volume >= volume_50d_avg * 1.4)
-            if high_volume_breakout:
-                details.append(f"🔥 VOLUMEN BREAKOUT ({current_volume/volume_50d_avg:.1f}x media)")
-
-            return {
-                'vcp_detected': vcp_detected,
-                'volatility_tightening': volatility_tightening,
-                'volume_dry_up': volume_dry_up,
-                'is_in_pivot': is_in_pivot,
-                'high_volume_breakout': high_volume_breakout,
-                'details': details if details else ["Sin señales claras de VCP"]
-            }
-            
-        except Exception as e:
-            print(f"Error analizando VCP: {e}")
-            return {'vcp_detected': False, 'is_in_pivot': False, 'details': [f'Error: {e}']}
-    
-    def detect_institutional_accumulation(self, df, volume_50d_avg):
-        """Detecta evidencia básica de acumulación institucional"""
-        try:
-            if len(df) < 50:
-                return False
-            
-            recent_data = df.tail(20)
-            
-            # 1. Días de acumulación superan a los de distribución
-            accumulation_days = (recent_data['Close'] > recent_data['Open']) & (recent_data['Volume'] > volume_50d_avg)
-            distribution_days = (recent_data['Close'] < recent_data['Open']) & (recent_data['Volume'] > volume_50d_avg)
-            volume_increase = accumulation_days.sum() > distribution_days.sum()
-
-            # 2. Ratio de volumen UP/DOWN (OBV-like)
-            # Suma el volumen en días de subida y resta el de días de bajada. Un valor positivo indica presión compradora.
-            up_volume = recent_data[recent_data['Close'] > recent_data['Open']]['Volume'].sum()
-            down_volume = recent_data[recent_data['Close'] < recent_data['Open']]['Volume'].sum()
-            up_days_ratio = up_volume > (down_volume * 1.2) # Volumen de subida es al menos un 20% mayor
-
-            # 3. Detección de "Pocket Pivot" (señal institucional clave)
-            # Un día alcista (últimos 5d) cuyo volumen supera el máximo de los días bajistas
-            # de los 10 días ANTERIORES (no solapados) a esos 5 días.
-            prior_10_days = df.iloc[-15:-5] if len(df) >= 15 else df.iloc[:-5]
-            down_day_volumes = prior_10_days[prior_10_days['Close'] < prior_10_days['Open']]['Volume']
-            max_down_volume = down_day_volumes.max() if not down_day_volumes.empty else 0
-
-            last_5_days = df.tail(5)
-            up_days_last_5 = last_5_days[last_5_days['Close'] > last_5_days['Open']]
-            has_pocket_pivot = (up_days_last_5['Volume'] > max_down_volume).any() if not up_days_last_5.empty else False
-
-            # Scoring de acumulación (requiere 2 de 3 señales)
-            accumulation_score = 0
-            if volume_increase: accumulation_score += 1
-            if up_days_ratio: accumulation_score += 1
-            if has_pocket_pivot: accumulation_score += 1
-            
-            return accumulation_score >= 2  # Require 2/3 criterios
-            
-        except Exception as e:
-            print(f"Error detectando acumulación institucional: {e}")
-            return False
-    
-    def hybrid_institutional_evidence(self, symbol, df, ticker_info, volume_50d_avg):
-        """Sistema híbrido mejorado para detectar evidencia institucional real"""
-        try:
-            evidence_score = 0
-            evidence_details = []
-            
-            # 1. ANÁLISIS BÁSICO DE VOLUMEN/PRECIO (0-2 puntos)
-            basic_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg)
-            if basic_accumulation:
-                evidence_score += 2
-                evidence_details.append("Volume accumulation pattern detected")
-            else:
-                evidence_details.append("No clear volume accumulation")
-            
-            # 2. CRITERIOS DE TAMAÑO MINERVINI (0-2 puntos)
-            market_cap = ticker_info.get('marketCap', 0) if ticker_info else 0
-            if market_cap > 0:
-                if 500_000_000 <= market_cap <= 50_000_000_000:  # $500M - $50B sweet spot
-                    evidence_score += 2
-                    evidence_details.append(f"Optimal market cap: ${market_cap/1_000_000_000:.1f}B")
-                elif market_cap >= 100_000_000:  # Mínimo $100M
-                    evidence_score += 1
-                    evidence_details.append(f"Acceptable market cap: ${market_cap/1_000_000_000:.1f}B")
-                else:
-                    evidence_details.append(f"Too small market cap: ${market_cap/1_000_000:.0f}M")
-            else:
-                evidence_details.append("Market cap data unavailable")
-            
-            # 3. PROPIEDAD INSTITUCIONAL REAL (0-2 puntos)
-            # heldPercentInstitutions = % del float en manos de fondos/instituciones (dato directo de yfinance)
-            # Nota: yfinance devuelve None cuando el dato no está disponible, distinto de 0% real.
-            inst_pct = ticker_info.get('heldPercentInstitutions') if ticker_info else None
-            shares_outstanding = ticker_info.get('sharesOutstanding', 0) if ticker_info else 0
-
-            if inst_pct is None:
-                # Dato no disponible: puntuación neutral (1 pto) — no penalizar por ausencia de dato
-                evidence_score += 1
-                evidence_details.append("Institutional ownership data unavailable (neutral)")
-            elif inst_pct >= 0.60:
-                evidence_score += 2
-                evidence_details.append(f"High institutional ownership: {inst_pct*100:.1f}%")
-            elif inst_pct >= 0.30:
-                evidence_score += 1
-                evidence_details.append(f"Moderate institutional ownership: {inst_pct*100:.1f}%")
-            else:
-                evidence_details.append(f"Low institutional ownership: {inst_pct*100:.1f}%")
-            
-            # 4. LIQUIDEZ INSTITUCIONAL (0-1 punto)
-            current_price = df['Close'].iloc[-1] if not df.empty else 0
-            avg_volume = volume_50d_avg if volume_50d_avg else 0
-            daily_dollar_volume = avg_volume * current_price
-            
-            if daily_dollar_volume > 5_000_000:  # >$5M daily volume
-                evidence_score += 1
-                evidence_details.append(f"Adequate liquidity: ${daily_dollar_volume/1_000_000:.1f}M daily")
-            else:
-                evidence_details.append(f"Low liquidity: ${daily_dollar_volume/1_000_000:.1f}M daily")
-            
-            # 5. CRITERIO DE SHARES OUTSTANDING MINERVINI (0-1 punto)
-            if shares_outstanding > 0:
-                if shares_outstanding < 100_000_000:  # <100M shares (preferencia Minervini)
-                    evidence_score += 1
-                    evidence_details.append(f"Good share count: {shares_outstanding/1_000_000:.0f}M shares")
-                else:
-                    evidence_details.append(f"High share count: {shares_outstanding/1_000_000:.0f}M shares")
-            
-            # SCORING FINAL: Require 4/8 puntos para pasar el filtro
-            passes_institutional = evidence_score >= 4
-            
-            return passes_institutional, evidence_score, evidence_details
-            
-        except Exception as e:
-            print(f"Error en análisis institucional híbrido para {symbol}: {e}")
-            return False, 0, ["Error in analysis"]
-
-    def get_pattern_score(self, vcp_analysis, institutional_accumulation):
-        """
-        Sistema de puntuación integrado para VCP y acumulación.
-        Reemplaza la lógica binaria 'OR' por un score más matizado.
-        Refactorizado para mayor claridad y mantenibilidad.
-        """
-        score = 0
-        details = []
-
-        # 1. Puntuación por Acumulación Institucional (señal de fondo)
-        if institutional_accumulation:
-            score += 4
-            details.append("Institutional Accumulation (+4)")
-
-        # 2. Puntuación por Patrón de Contracción de Volatilidad (VCP)
-        # Estas condiciones son mutuamente excluyentes y representan la calidad del setup.
-        # La señal de mayor calidad es un punto pivote accionable.
-        if vcp_analysis.get('is_in_pivot', False):
-            score += 8  # Puntuación máxima por setup de entrada ideal
-            details.append("Pivot Point (+8)")
-        # Si no está en pivote, pero hay un VCP general, también es muy bueno.
-        elif vcp_analysis.get('vcp_detected', False):
-            score += 5  # Puntuación estándar por contracción de volatilidad
-            details.append("VCP Detected (+5)")
-
-        return score, details
-
-    
-    def calculate_minervini_score(self, analysis):
-        """
-        Calcula un score Minervini (0-100) alineado con la metodología SEPA.
-        Desglose: Stage(40) + RS(30) + Posición 52w(20) + Patrones/Fundamentales(10).
-        Multiplicador final por señal de entrada (0.8 – 1.15).
-        """
-        try:
-            base_score = 0
-
-            # 1. TENDENCIA Y ESTRUCTURA (Máx 40 puntos)
-            stage = analysis.get('stage_analysis', '')
-            if 'Stage 2' in stage:
-                base_score += 40
-            elif 'Stage 1' in stage:
-                base_score += 20
-            # Stage 3 (distribución/techo) = 0 puntos — Minervini la evita explícitamente
-
-            # 2. FUERZA RELATIVA (Máx 30 puntos + 5 pts RS Line en nuevos máximos)
-            rs_rating = analysis.get('rs_rating', 0)
-            if rs_rating:
-                base_score += (rs_rating / 100) * 30
-            if analysis.get('rs_line_new_high', False):
-                base_score += 5  # RS Line en o cerca de nuevos máximos de 52 semanas
-
-            # 3. POSICIÓN 52W (Máx 20 puntos: 10 proximidad al máximo + 10 distancia al mínimo)
-            dist_from_high = analysis.get('distance_to_52w_high', 100)
-            if dist_from_high is not None:
-                proximity_score = 10 * (1 - (dist_from_high / self.MAX_PCT_BELOW_HIGH))
-                base_score += max(0, proximity_score)
-
-            dist_from_low = analysis.get('distance_from_52w_low', 0)
-            if dist_from_low is not None:
-                # 0 pts cerca del mínimo del umbral, 10 pts al 100%+ sobre mínimo
-                base_score += min(10 * (dist_from_low / 100.0), 10)
-
-            # 3.5. RANKING DE INDUSTRIA
-            industry_rank = analysis.get('industry_rank')
-            if industry_rank is not None:
-                if industry_rank >= 80:
-                    base_score += 5  # Industria líder
-                elif industry_rank >= 60:
-                    base_score += 2  # Industria fuerte
-
-            # 4. PATRONES TÉCNICOS Y FUNDAMENTALES (Máx 10 puntos)
-            # VCP=3, Acumulación institucional=3, Aceleración beneficios=2, ROE fuerte=2
-            if analysis.get('vcp_detected', False):
-                base_score += 3
-            if analysis.get('institutional_accumulation', False):
-                base_score += 3
-            if analysis.get('earnings_acceleration', False):
-                base_score += 2
-                if analysis.get('accel_quarters', 0) >= 3:
-                    base_score += 1  # Bonus por aceleración persistente (3+ trimestres)
-            if analysis.get('roe_strong', False):
-                base_score += 2
-
-            # 5. MULTIPLICADOR DE SEÑAL DE ENTRADA
-            entry_signal = analysis.get('entry_signal', 'Consolidando')
-            multipliers = {
-                'Pivot Breakout': 1.20,  # Breakout confirmado con volumen institucional
-                'Pivot Point': 1.15,
-                'VCP Setup': 1.10,
-                'MA-Bounce-50': 1.07,
-                'MA-Bounce-21': 1.05,
-                'Consolidando': 1.0,
-                'Extendido': 0.8
-            }
-            final_score = base_score * multipliers.get(entry_signal, 1.0)
-
-            return min(round(final_score, 1), 100)
-
-        except Exception as e:
-            print(f"Error calculando Minervini Score: {e}")
-            return 0
-    
-    # --- FUNCIONES AUXILIARES DE FILTRADO (REFACTORIZACIÓN) ---
-    # Estas funciones descomponen la lógica de get_minervini_analysis para mayor claridad.
-
-    def _build_rejection_result(self, stage, reason, rs_rating, debug_mode=False, filter_name=""):
-        """Construye y devuelve un diccionario MÍNIMO para una acción rechazada."""
-        if debug_mode:
-            print(f"    ❌ RECHAZADO [{filter_name}]: {reason}")
-
-        # Devolvemos solo la información esencial para el resumen de filtrado.
-        # No se calcula score ni se guardan datos detallados para optimizar.
-        return {
-            'passes_all_filters': False,
-            'stage_analysis': stage,
-            'filter_reasons': [reason],
-            'rs_rating': rs_rating,
-            'minervini_score': 0,
-        }
-
-    def _check_trend_and_mas(self, current_price, ma_50, ma_150, ma_200, df):
-        """Filtro 1 y 2: Valida la tendencia de largo plazo y la jerarquía de las medias móviles."""
-        if not all(pd.notna(x) for x in [current_price, ma_50, ma_150, ma_200]):
-            return False, "Datos de MAs incompletos"
-
-        if not (current_price > ma_150 and current_price > ma_200):
-            return False, "Precio por debajo de MA150 o MA200"
-
-        if not (ma_150 > ma_200):
-            return False, "MA150 no está por encima de MA200"
-
-        ma200_22_days_ago = df['MA_200'].iloc[-22] if len(df) > 22 else None
-        if not (ma200_22_days_ago and pd.notna(ma200_22_days_ago) and ma_200 > ma200_22_days_ago):
-            return False, "MA200 no tiene tendencia alcista ≥1 mes"
-
-        # La condición Price > MA50 se elimina de este filtro inicial.
-        # Esto permite que acciones en un pullback a la MA50 sean analizadas.
-        # La lógica de `get_entry_signal` determinará si el rebote es válido.
-        if not (ma_50 > ma_150 > ma_200):
-            return False, "Jerarquía MAs incorrecta (MA50>MA150>MA200)"
-
-        return True, ""
-
-    def _check_52_week_range_position(self, current_price, high_52w, low_52w, rs_rating):
-        """Filtro 3: Valida la posición del precio dentro del rango de 52 semanas."""
-        if not all([current_price, high_52w, low_52w]):
-            return False, "No se pudo calcular rango 52w", None, None
-
-        distance_from_low = ((current_price - low_52w) / low_52w) * 100
-        distance_from_high = ((high_52w - current_price) / high_52w) * 100
-
-        price_above_low_threshold = distance_from_low >= self.MIN_PCT_ABOVE_LOW
-        if not price_above_low_threshold:
-            # Excepción para líderes de mercado fuertes
-            is_strong_leader_candidate = distance_from_high < self.STRONG_LEADER_MAX_PCT_BELOW_HIGH
-            is_high_rs = rs_rating is not None and rs_rating > self.STRONG_LEADER_MIN_RS
-            if not (is_strong_leader_candidate and is_high_rs):
-                return False, "Precio no está 30%+ sobre mínimo 52w", distance_from_low, distance_from_high
-
-        price_near_high = distance_from_high <= self.MAX_PCT_BELOW_HIGH
-        if not price_near_high:
-            return False, "Precio no está dentro del 25% del máximo 52w", distance_from_low, distance_from_high
-
-        return True, "", distance_from_low, distance_from_high
-
-    def _check_price_volume_pattern(self, df, vcp_analysis, volume_50d_avg):
-        """Calcula el score de patrón (VCP/acumulación) sin filtrar. Solo afecta al score final."""
-        institutional_accumulation = self.detect_institutional_accumulation(df, volume_50d_avg) if volume_50d_avg else False
-        pattern_score, _ = self.get_pattern_score(vcp_analysis, institutional_accumulation)
-        return True, "", pattern_score, institutional_accumulation
-
-    def _check_fundamental_health(self, ticker_info):
-        """Filtros 0, 6 y 7: Valida la salud fundamental (beneficios, crecimiento, ROE).
-        Devuelve (passed, reason, earnings_acceleration, roe_strong, multi_quarter_accel, accel_quarters)."""
-        if not ticker_info:
-            return False, "Datos fundamentales no disponibles", False, False, None, 0
-
-        # Filtro 0: Beneficios positivos — con fallback a trailingEps si netIncomeToCommon no está disponible
-        net_income = ticker_info.get('netIncomeToCommon')
-        if net_income is None:
-            trailing_eps = ticker_info.get('trailingEps')
-            shares = ticker_info.get('sharesOutstanding') or 1
-            if trailing_eps is not None:
-                net_income = trailing_eps * shares  # proxy aproximado
-            # Si tampoco hay EPS, se omite el check (el filtro de earnings_growth lo cubre)
-        if net_income is not None and net_income <= 0:
-            return False, f"Beneficios negativos/nulos (${net_income/1_000_000:.1f}M)", False, False, None, 0
-
-        # Filtro 6: Crecimiento de beneficios — fallback trimestral → anual
-        earnings_growth = ticker_info.get('earningsQuarterlyGrowth')
-        if earnings_growth is None:
-            earnings_growth = ticker_info.get('earningsGrowth')  # dato anual como fallback
-        if earnings_growth is None:
-            return False, "Dato de Earnings Growth no disponible (ni trimestral ni anual)", False, False, None, 0
-        if earnings_growth < self.MIN_EARNINGS_GROWTH:
-            return False, f"Earnings growth < {self.MIN_EARNINGS_GROWTH:.0%} YoY", False, False, None, 0
-
-        # Aceleración multi-trimestre
-        multi_quarter_accel, growth_rates = _compute_quarterly_earnings_growth(ticker_info)
-        # Contar trimestres consecutivos con growth >= 0.25
-        accel_quarters = 0
-        for g in growth_rates:
-            if g >= 0.25:
-                accel_quarters += 1
-            else:
-                break
-
-        # earnings_acceleration: usa multi-trimestre si disponible, sino fallback a single-quarter
-        if multi_quarter_accel is not None:
-            earnings_acceleration = multi_quarter_accel
-        else:
-            earnings_acceleration = earnings_growth > 0.3
-
-        # Filtro 7: Crecimiento de ingresos y ROE (Lógica Inteligente)
-        roe = ticker_info.get('returnOnEquity')
-        if not (roe is not None and roe >= self.MIN_ROE):
-            return False, f"ROE < {self.MIN_ROE:.0%} o no disponible", earnings_acceleration, False, multi_quarter_accel, accel_quarters
-
-        has_strong_roe = True # Si llega aquí, el ROE es fuerte
-
-        revenue_growth = ticker_info.get('revenueGrowth')
-
-        # Escenario 1: Crecimiento clásico (buenos ingresos)
-        if revenue_growth is not None and revenue_growth >= self.MIN_REVENUE_GROWTH:
-            return True, "", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
-
-        # Escenario 2: "Central de productividad" (beneficios excepcionales compensan ingresos más bajos)
-        if earnings_growth >= self.EXCEPTIONAL_EARNINGS_GROWTH and \
-           revenue_growth is not None and revenue_growth >= self.DECENT_REVENUE_GROWTH:
-            return True, "", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
-
-        # Si no cumple ninguno de los dos escenarios, falla.
-        return False, "Crecimiento de ingresos/beneficios insuficiente", earnings_acceleration, has_strong_roe, multi_quarter_accel, accel_quarters
-
-    def _check_ma_bounce(self, df, current_price, ma_period, uptrend_days, touch_days, touch_proximity, bounce_limit):
-        """
-        Helper genérico para detectar un rebote en una media móvil específica.
-        Devuelve True si se detecta un rebote válido, False en caso contrario.
-        """
-        ma_col = f'MA_{ma_period}'
-        ma_series = df.get(ma_col)
-
-        if ma_series is None or pd.isna(ma_series.iloc[-1]):
-            return False
-
-        ma_value = ma_series.iloc[-1]
-        
-        # 1. La MA debe estar en tendencia alcista
-        is_uptrending = ma_value > ma_series.iloc[-uptrend_days] if len(df) > uptrend_days else False
-        if not is_uptrending:
-            return False
-
-        # 2. El precio debe haber tocado (o estado muy cerca) de la MA recientemente
-        # La lógica `low < ma * (1 + proximity)` significa que el mínimo del día estuvo por debajo o ligeramente por encima de la MA.
-        touched_ma = (df['Low'].tail(touch_days) < ma_series.tail(touch_days) * (1 + touch_proximity)).any()
-        if not touched_ma:
-            return False
-            
-        # 3. El precio debe estar rebotando ahora, pero no demasiado extendido
-        return current_price > ma_value and ((current_price - ma_value) / ma_value) < bounce_limit
-
-    def get_minervini_analysis(self, df, rs_rating, symbol, cache_manager, session, debug_mode=False, spy_df=None, industry_rank=None):
-        """Análisis completo y optimizado con 'early exit' según metodología SEPA de Minervini"""
-        try:
-            # --- GUARDIA INICIAL: DATOS INSUFICIENTES ---
-            if df.empty or len(df) < 252:
-                return self._build_rejection_result(
-                    stage='Insufficient Data',
-                    reason='Datos insuficientes (<252 días)',
-                    rs_rating=rs_rating,
-                    debug_mode=debug_mode,
-                    filter_name="Datos"
-                ), False
-            
-            # --- CÁLCULOS BÁSICOS INICIALES ---
-            latest = df.iloc[-1]
-            current_price = latest['Close']
-            ma_10 = latest['MA_10']
-            ma_21 = latest['MA_21']
-            ma_50 = latest['MA_50']
-            ma_150 = latest['MA_150'] 
-            ma_200 = latest['MA_200']
-            high_52w, low_52w = self.calculate_52_week_range(df)
-            volume_50d_avg = df['Volume'].tail(50).mean()
-
-            # --- ANÁLISIS DE PUNTO DE ENTRADA (SE CALCULA SIEMPRE PARA EL SCORE Y EL DASHBOARD) ---
-            price_vs_ma10_pct = ((current_price - ma_10) / ma_10) * 100 if pd.notna(ma_10) else 999
-            price_vs_ma21_pct = ((current_price - ma_21) / ma_21) * 100 if pd.notna(ma_21) else 999
-            is_extended = price_vs_ma10_pct > 10 or price_vs_ma21_pct > 15 # Umbrales de extensión
-
-            # FILTROS TÉCNICOS
-            passed, reason = self._check_trend_and_mas(current_price, ma_50, ma_150, ma_200, df)
-            if not passed: return self._build_rejection_result('Stage 1/3/4', reason, rs_rating, debug_mode, "Tendencia/MAs"), False
-
-            passed, reason, dist_low, dist_high = self._check_52_week_range_position(current_price, high_52w, low_52w, rs_rating)
-            if not passed: return self._build_rejection_result('Stage 2 (Developing)', reason, rs_rating, debug_mode, "Rango 52w"), False
-            distance_from_low, distance_from_high = dist_low, dist_high # Guardar para el score final
-
-            if not (rs_rating is not None and rs_rating >= self.MIN_RS_RATING):
-                return self._build_rejection_result('Stage 2 (Developing)', f"RS Rating insuficiente (<{self.MIN_RS_RATING})", rs_rating, debug_mode, "RS Rating"), False
-
-            # --- ANÁLISIS DE PATRONES (VCP/acumulación) — solo afecta al score, no filtra ---
-            vcp_analysis = self.analyze_vcp_characteristics(df, high_52w, volume_50d_avg)
-            _, _, pattern_score, institutional_accumulation = self._check_price_volume_pattern(df, vcp_analysis, volume_50d_avg)
-
-            # --- SI LLEGA AQUÍ, PASA TODOS LOS FILTROS TÉCNICOS ---
-            if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS TÉCNICOS --- \n")
-            passes_technical = True
-            stage_analysis = "Stage 2 (Uptrend)"
-
-            # --- RS LINE EN NUEVOS MÁXIMOS (solo para stocks que pasan filtros técnicos) ---
-            rs_line_signal = self.calculate_rs_line_signal(df, spy_df)
-            rs_line_new_high = rs_line_signal['rs_line_new_high']
-
-            # --- OBTENER DATOS FUNDAMENTALES (SOLO SI PASA FILTROS TÉCNICOS) ---
-            # Esta es una optimización clave: solo hacemos la llamada a la API/caché
-            # para las acciones que ya son técnicamente prometedoras.
-            ticker_info, had_to_retry = fetch_info_for_symbol(symbol, cache_manager, session=session)
-            if not ticker_info or 'sector' not in ticker_info:
-                return self._build_rejection_result(stage_analysis, "Datos fundamentales (.info) no disponibles", rs_rating, debug_mode, "Fundamentales"), had_to_retry
-
-            # FILTRO 8: SALUD FUNDAMENTAL (CRECIMIENTO Y RENTABILIDAD)
-            passed, reason, earnings_acceleration, roe_strong, multi_quarter_accel, accel_quarters = self._check_fundamental_health(ticker_info)
-            if not passed:
-                return self._build_rejection_result(stage_analysis, reason, rs_rating, debug_mode, "Salud Fundamental"), had_to_retry
-
-            # FILTRO 9: EVIDENCIA INSTITUCIONAL (HÍBRIDO)
-            passes_institutional, institutional_score, institutional_details = self.hybrid_institutional_evidence(symbol, df, ticker_info, volume_50d_avg)
-            if not passes_institutional:
-                return self._build_rejection_result(stage_analysis, "Evidencia institucional insuficiente", rs_rating, debug_mode, "Evidencia Institucional"), had_to_retry
-
-            if debug_mode: print("\n    --- ✅ PASA TODOS LOS FILTROS FUNDAMENTALES --- \n")
-
-            # --- ¡ÉXITO! LA ACCIÓN PASA TODOS LOS FILTROS ---
-            # Calcular la señal de entrada solo para las acciones que pasan todos los filtros
-            entry_signal_info = self.get_entry_signal(df, vcp_analysis, is_extended)
-            entry_signal = entry_signal_info["signal"]
-            is_actionable = entry_signal_info["is_actionable"]
-
-            analysis_for_scoring = {
-                'stage_analysis': stage_analysis, 'rs_rating': rs_rating,
-                'distance_to_52w_high': distance_from_high, 'distance_from_52w_low': distance_from_low,
-                'vcp_detected': vcp_analysis['vcp_detected'],
-                'institutional_accumulation': institutional_accumulation,
-                'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
-                'earnings_acceleration': earnings_acceleration, 'roe_strong': roe_strong,
-                'multi_quarter_accel': multi_quarter_accel, 'accel_quarters': accel_quarters,
-                'rs_line_new_high': rs_line_new_high,
-                'industry_rank': industry_rank,
-                'is_extended': is_extended, 'is_actionable_entry': is_actionable,
-                'entry_signal': entry_signal
-            }
-            minervini_score = self.calculate_minervini_score(analysis_for_scoring)
-
-            # Actualizar el diccionario de resultados con todos los datos de la acción exitosa
-            result = {
-                'current_price': round(current_price, 2),
-                'stage_analysis': stage_analysis,
-                'passes_all_filters': True,
-                'minervini_score': minervini_score,
-                'filter_reasons': ["✅ PASA TODOS LOS FILTROS MINERVINI"],
-                'rs_rating': rs_rating,
-                'passes_minervini_technical': passes_technical,
-                'passes_minervini_fundamental': True,
-                'ma_50': round(ma_50, 2) if pd.notna(ma_50) else None,
-                'ma_150': round(ma_150, 2) if pd.notna(ma_150) else None,
-                'ma_200': round(ma_200, 2) if pd.notna(ma_200) else None,
-                'high_52w': round(high_52w, 2) if high_52w else None,
-                'low_52w': round(low_52w, 2) if low_52w else None,
-                'distance_from_52w_low': round(distance_from_low, 1) if distance_from_low else None,
-                'distance_to_52w_high': round(distance_from_high, 1) if distance_from_high else None,
-                'pattern_score': pattern_score,
-                'vcp_detected': vcp_analysis['vcp_detected'],
-                'entry_signal': entry_signal,
-                'entry_signal_text': entry_signal_info["text"],
-                'entry_signal_class': entry_signal_info["css_class"], 'is_extended': is_extended, 'is_actionable_entry': is_actionable,
-                'vcp_analysis': vcp_analysis,
-                'institutional_accumulation': institutional_accumulation,
-                'institutional_evidence': passes_institutional, 'institutional_score': institutional_score,
-                'institutional_details': institutional_details,
-                'volume_50d_avg': int(volume_50d_avg) if volume_50d_avg else None,
-                'earnings_acceleration': earnings_acceleration,
-                'roe_strong': roe_strong,
-                'multi_quarter_accel': multi_quarter_accel,
-                'accel_quarters': accel_quarters,
-                'rs_line_new_high': rs_line_new_high,
-                'industry_rank': industry_rank,
-                # Añadir información de la compañía para su uso posterior
-                'company_name': ticker_info.get('longName', symbol),
-                'sector': ticker_info.get('sector', 'N/A'),
-                'industry': ticker_info.get('industry', 'N/A'),
-                'market_cap': ticker_info.get('marketCap', 'N/A')
-            }
-            return result, had_to_retry
-            
-        except Exception as e:
-            print(f"Error en análisis Minervini para {symbol}: {e}")
-            return self._build_rejection_result('Error', f'Error de cálculo: {e}', rs_rating, debug_mode, "Error Interno"), False
+            print(f"⚠️ Error descargando ^GSPC: {e}")
+
+        return all_data
+
+    # =================== RS RATING ===================
+
+    def calculate_all_rs_scores(self, all_data):
+        """Calcula score de rendimiento relativo para todas las acciones (fórmula IBD)."""
+        print("\nCalculando RS scores...")
+        rs_scores = {}
+        for symbol, df in all_data.items():
+            if symbol == '_MARKET_INDEX':
+                continue
+            try:
+                if len(df) < 252:
+                    continue
+                c = df['Close']
+                p3   = ((c.iloc[-1] / c.iloc[-63]) - 1) * 100 if len(df) >= 63 else 0
+                p_q2 = ((c.iloc[-63] / c.iloc[-126]) - 1) * 100 if len(df) >= 126 else 0
+                p_q3 = ((c.iloc[-126] / c.iloc[-189]) - 1) * 100 if len(df) >= 189 else 0
+                p_q4 = ((c.iloc[-189] / c.iloc[-252]) - 1) * 100
+                rs_scores[symbol] = 0.4 * p3 + 0.2 * p_q2 + 0.2 * p_q3 + 0.2 * p_q4
+            except Exception:
+                continue
+        print(f"✓ RS scores calculados: {len(rs_scores)} acciones.")
+        return pd.Series(rs_scores)
+
+    def calculate_rs_ratings_from_scores(self, rs_scores):
+        """Convierte scores en percentiles 0-100."""
+        if rs_scores.empty:
+            return pd.Series()
+        rs_ratings = rs_scores.rank(pct=True) * 100
+        print(f"✓ RS Ratings (percentiles) calculados.")
+        return rs_ratings.round(1)
 
     def rank_industries_by_rs(self, rs_ratings):
-        """
-        Agrupa los símbolos por industria y calcula la mediana de RS Rating por grupo.
-        Solo incluye industrias con >= 3 símbolos. Convierte a percentil 0-100.
-        Devuelve dict {industry_name: percentile_rank}.
-        """
+        """Agrupa por industria y calcula percentil de RS mediana."""
         try:
             industry_rs = {}
             for symbol, score in rs_ratings.items():
                 industry = self.symbol_industries.get(symbol, {}).get('industry', 'Unknown')
-                if industry not in industry_rs:
-                    industry_rs[industry] = []
-                industry_rs[industry].append(score)
-
-            # Calcular mediana por industria, solo si tiene >= 3 símbolos
-            industry_medians = {}
-            for industry, scores in industry_rs.items():
-                if len(scores) >= 3:
-                    industry_medians[industry] = pd.Series(scores).median()
-
+                industry_rs.setdefault(industry, []).append(score)
+            industry_medians = {
+                ind: pd.Series(scores).median()
+                for ind, scores in industry_rs.items()
+                if len(scores) >= 3
+            }
             if not industry_medians:
                 return {}
-
-            medians_series = pd.Series(industry_medians)
-            percentile_ranks = (medians_series.rank(pct=True) * 100).round(1)
-            return percentile_ranks.to_dict()
-
+            return (pd.Series(industry_medians).rank(pct=True) * 100).round(1).to_dict()
         except Exception as e:
             print(f"Error en rank_industries_by_rs: {e}")
             return {}
 
-    def calculate_rs_line_signal(self, df, spy_df):
+    # =================== FILTRO DE MERCADO ===================
+
+    def check_market_health(self, spy_df):
         """
-        Calcula la RS Line (precio acción / precio S&P500) y determina si está
-        cerca de nuevos máximos de 52 semanas (señal de liderazgo).
-        Devuelve dict {'rs_line_new_high': bool, 'rs_line_pct_from_high': float|None}.
+        Evalúa si el mercado está en tendencia alcista (SPY sobre MA200).
+        Devuelve (is_healthy: bool, health_score: 0-15 pts).
+        Un mercado bajo MA200 es bajista — los Springs son mucho menos fiables.
+        """
+        if spy_df is None or len(spy_df) < 200:
+            return True, 7.5  # Sin datos: asumir neutral
+
+        close = spy_df['Close'].astype(float)
+        ma200 = close.rolling(200).mean()
+        ma50  = close.rolling(50).mean()
+
+        current  = float(close.iloc[-1])
+        ma200_v  = float(ma200.iloc[-1])
+        ma50_v   = float(ma50.iloc[-1]) if pd.notna(ma50.iloc[-1]) else current
+
+        if current > ma200_v:
+            pct_above = (current - ma200_v) / ma200_v * 100
+            # Bonus si además MA50 > MA200 (mercado fuerte)
+            ma_aligned = ma50_v > ma200_v
+            score = min(15.0, 8.0 + pct_above * 0.5 + (3.0 if ma_aligned else 0.0))
+            return True, round(score, 1)
+        else:
+            # Mercado bajista: score reducido pero no cero (mercados laterales existen)
+            pct_below = (ma200_v - current) / ma200_v * 100
+            score = max(0.0, 4.0 - pct_below * 0.4)
+            return False, round(score, 1)
+
+    # =================== VOLUME PROFILE (VPVR) ===================
+
+    def calculate_volume_profile(self, df):
+        """
+        Calcula POC y HVN del Volume Profile sobre VOL_LOOKBACK días.
+        Distribuye el volumen de cada vela proporcionalmente entre los bins
+        que cubre su rango High-Low.
         """
         try:
-            if spy_df is None or spy_df.empty:
-                return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+            data = df.tail(self.VOL_LOOKBACK)
+            if len(data) < 50:
+                return None, []
 
-            # Alinear por fechas comunes
-            common_dates = df.index.intersection(spy_df.index)
-            if len(common_dates) < 50:
-                return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+            lows    = data['Low'].values.astype(float)
+            highs   = data['High'].values.astype(float)
+            volumes = data['Volume'].values.astype(float)
 
-            stock_close = df.loc[common_dates, 'Close']
-            spy_close = spy_df.loc[common_dates, 'Close']
+            price_min = lows.min()
+            price_max = highs.max()
+            if price_max <= price_min:
+                return None, []
 
-            rs_line = stock_close / spy_close
-            rs_line_52w = rs_line.tail(252)
-            rs_line_high_52w = rs_line_52w.max()
-            rs_line_current = rs_line.iloc[-1]
+            n_bins = self.VP_BINS
+            price_range = price_max - price_min
+            volume_by_price = np.zeros(n_bins)
+            bins = np.linspace(price_min, price_max, n_bins + 1)
 
-            if rs_line_high_52w and rs_line_high_52w > 0:
-                pct_from_high = ((rs_line_high_52w - rs_line_current) / rs_line_high_52w) * 100
-                rs_line_new_high = pct_from_high <= 5.0  # Dentro del 5% del máximo
-            else:
-                pct_from_high = None
-                rs_line_new_high = False
+            for i in range(len(lows)):
+                low_bin  = int((lows[i]  - price_min) / price_range * n_bins)
+                high_bin = int((highs[i] - price_min) / price_range * n_bins)
+                low_bin  = max(0, min(low_bin,  n_bins - 1))
+                high_bin = max(0, min(high_bin, n_bins - 1))
+                n_covered = high_bin - low_bin + 1
+                if n_covered > 0:
+                    volume_by_price[low_bin:high_bin + 1] += volumes[i] / n_covered
 
-            return {'rs_line_new_high': rs_line_new_high, 'rs_line_pct_from_high': round(pct_from_high, 2) if pct_from_high is not None else None}
+            poc_bin   = int(np.argmax(volume_by_price))
+            poc_price = float((bins[poc_bin] + bins[poc_bin + 1]) / 2)
 
+            active = volume_by_price[volume_by_price > 0]
+            if len(active) == 0:
+                return poc_price, []
+
+            hvn_threshold = active.mean() * self.HVN_THRESHOLD
+            bin_centers   = (bins[:-1] + bins[1:]) / 2
+            hvn_prices    = bin_centers[volume_by_price >= hvn_threshold].tolist()
+
+            return poc_price, [float(h) for h in hvn_prices]
         except Exception:
-            return {'rs_line_new_high': False, 'rs_line_pct_from_high': None}
+            return None, []
 
-    def get_entry_signal(self, df, vcp_analysis, is_extended):
+    # =================== SOPORTE ESTRUCTURAL S1 ===================
+
+    def find_structural_support(self, df):
         """
-        Determina la mejor señal de entrada analizando múltiples patrones.
-        Devuelve un diccionario con la señal, texto para mostrar, clase CSS y si es accionable.
+        S1 = mínimo más bajo en los SUPPORT_LOOKBACK días previos a la ventana
+        de búsqueda del Spring. Es decir: días [-(SUPPORT_LOOKBACK + SPRING_SEARCH_WINDOW),
+        -SPRING_SEARCH_WINDOW].
+
+        Crítico para Wyckoff: el Spring debe perforar un soporte ESTABLECIDO PREVIAMENTE.
+        Si S1 fuera el mínimo absoluto del rango incluyendo la ventana de Spring,
+        sería imposible que el Spring tuviera Low < S1 (paradoja matemática).
         """
-        # Prioridad 1: Pivote VCP (la señal de más bajo riesgo)
-        if vcp_analysis.get('is_in_pivot', False):
-            if vcp_analysis.get('high_volume_breakout', False):
-                return {
-                    "signal": "Pivot Breakout",
-                    "text": "¡BREAKOUT con Volumen! (Entrada Ideal)",
-                    "css_class": "pivot-breakout",
-                    "is_actionable": True
+        window_end = self.SPRING_SEARCH_WINDOW
+        window_start = self.SPRING_SEARCH_WINDOW + self.SUPPORT_LOOKBACK
+        if len(df) <= window_start:
+            # Datos insuficientes para separar las ventanas: usar todo lo disponible
+            # excepto los últimos SPRING_SEARCH_WINDOW días
+            s1_window = df.iloc[:-window_end] if len(df) > window_end else df
+        else:
+            s1_window = df.iloc[-window_start:-window_end]
+        if s1_window.empty:
+            return float(df['Low'].min())
+        return float(s1_window['Low'].min())
+
+    # =================== CONFLUENCIA S1 ↔ VP (gradual) ===================
+
+    def check_s1_confluence(self, s1, poc, hvn_list):
+        """
+        Valida que S1 esté dentro del 1.5% de un HVN o del POC.
+        Gradiente de calidad (a más cerca, más puntos):
+          POC 0-0.5%: 30 pts  | 0.5-1.0%: 22 pts  | 1.0-1.5%: 14 pts
+          HVN 0-0.5%: 25 pts  | 0.5-1.0%: 18 pts  | 1.0-1.5%: 10 pts
+        Devuelve (válido, score 0-30, nivel más cercano).
+        """
+        tol = self.S1_CONFLUENCE_TOLERANCE
+
+        def _graded_score(dist_pct, max_pts, mid_pts, min_pts):
+            """Asigna puntos por banda: <0.33×tol, 0.33-0.66×tol, 0.66-1.0×tol."""
+            if dist_pct <= tol / 3:
+                return max_pts
+            elif dist_pct <= tol * 2 / 3:
+                return mid_pts
+            else:
+                return min_pts
+
+        if poc is not None and poc > 0:
+            dist = abs(s1 - poc) / poc
+            if dist <= tol:
+                return True, _graded_score(dist, 30.0, 22.0, 14.0), poc
+
+        best_hvn, best_dist = None, float('inf')
+        for hvn in hvn_list:
+            if hvn > 0:
+                dist = abs(s1 - hvn) / hvn
+                if dist < best_dist:
+                    best_dist, best_hvn = dist, hvn
+
+        if best_hvn is not None and best_dist <= tol:
+            return True, _graded_score(best_dist, 25.0, 18.0, 10.0), best_hvn
+
+        return False, 0.0, None
+
+    # =================== DETECCIÓN SPRING (FASE C WYCKOFF) ===================
+
+    def detect_spring(self, df, s1):
+        """
+        Spring de Wyckoff (Fase C): vela RECIENTE que perfora un soporte ESTABLECIDO
+        (S1, calculado de la ventana histórica previa) por abajo y cierra por encima,
+        con cierre en el tercio superior y volumen > SMA(20) × FILTER_VOLUMEN.
+
+        La búsqueda se limita a los últimos SPRING_SEARCH_WINDOW días para garantizar
+        frescura de la señal y consistencia con la definición de S1.
+        Retorna el Spring más reciente detectado.
+        """
+        if len(df) < 25:
+            return None
+
+        vol_sma = df['Volume'].rolling(20).mean()
+        search_start = max(20, len(df) - self.SPRING_SEARCH_WINDOW)
+        best_spring = None
+
+        for i in range(search_start, len(df)):
+            row = df.iloc[i]
+            candle_range = float(row['High']) - float(row['Low'])
+            if candle_range <= 0:
+                continue
+
+            close_pos = (float(row['Close']) - float(row['Low'])) / candle_range
+            sma_vol = float(vol_sma.iloc[i]) if pd.notna(vol_sma.iloc[i]) else 0.0
+
+            if (float(row['Low']) < s1 and
+                    float(row['Close']) > s1 and
+                    close_pos >= 0.67 and
+                    sma_vol > 0 and
+                    float(row['Volume']) > sma_vol * self.FILTER_VOLUMEN):
+
+                best_spring = {
+                    'index': i,
+                    'date': str(df.index[i].date()),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                    'high': float(row['High']),
+                    'volume': float(row['Volume']),
+                    'vol_ratio': round(float(row['Volume']) / sma_vol, 2),
+                    'close_position': round(close_pos, 3),
+                    'spring_depth_pct': round((s1 - float(row['Low'])) / s1 * 100, 3),
                 }
-            return {
-                "signal": "Pivot Point",
-                "text": "Punto Pivote (¡Listo!)",
-                "css_class": "pivot-point",
-                "is_actionable": True
-            }
 
-        # Prioridad 2: Rebote en medias móviles (50 y 21 días)
-        # Itera sobre los parámetros definidos en __init__ para mayor claridad y mantenibilidad.
-        # El orden en el diccionario (si Python >= 3.7) o la definición de la lista de prioridades
-        # asegura que se compruebe primero la MA50.
-        current_price = df['Close'].iloc[-1]
-        for ma_period, params in self.BOUNCE_PARAMS.items():
-            if self._check_ma_bounce(df, current_price, ma_period=ma_period, **params):
-                signal = f"MA-Bounce-{ma_period}"
-                return {
-                    "signal": signal,
-                    "text": f"Rebote en MA-{ma_period}",
-                    "css_class": signal.lower().replace('_', '-'),
-                    "is_actionable": True
-                }
+        return best_spring
 
-        # Prioridad 3: VCP general detectado (setup en formación)
-        if vcp_analysis.get('vcp_detected', False):
-            return {
-                "signal": "VCP Setup",
-                "text": "VCP en Formación (Vigilar)",
-                "css_class": "vcp-setup",
-                "is_actionable": True
-            }
+    # =================== DETECCIÓN TEST (GATILLO ENTRADA) ===================
 
-        # Si no hay señal de entrada, determinar si está extendido o consolidando
-        if is_extended:
+    def detect_test_signal(self, df, spring_idx, s1):
+        """
+        Tras el Spring, detecta el retroceso de test hacia S1 con volumen
+        decreciente y por debajo de SMA(20). Retorna el Test más reciente.
+        """
+        if spring_idx is None or spring_idx >= len(df) - 1:
+            return None
+
+        vol_sma = df['Volume'].rolling(20).mean()
+        tol = self.TEST_TOLERANCE
+        latest_test = None
+
+        for i in range(spring_idx + 1, len(df)):
+            row = df.iloc[i]
+            sma_vol = float(vol_sma.iloc[i]) if pd.notna(vol_sma.iloc[i]) else 0.0
+            if sma_vol <= 0:
+                continue
+
+            price_in_zone = (
+                s1 <= float(row['Low']) <= s1 * (1 + tol) or
+                s1 <= float(row['Close']) <= s1 * (1 + tol)
+            )
+
+            if price_in_zone and float(row['Volume']) < sma_vol:
+                vol_declining = float(row['Volume']) < float(df['Volume'].iloc[i - 1])
+                if vol_declining:
+                    latest_test = {
+                        'index': i,
+                        'date': str(df.index[i].date()),
+                        'close': float(row['Close']),
+                        'volume': float(row['Volume']),
+                        'vol_ratio': round(float(row['Volume']) / sma_vol, 2),
+                        'is_current': i == len(df) - 1,
+                    }
+
+        return latest_test
+
+    # =================== VALIDACIÓN POST-SPRING ===================
+
+    def check_spring_invalidation(self, df, spring_info):
+        """
+        Verifica si el Spring ha sido INVALIDADO tras formarse:
+        si alguna vela posterior cierra POR DEBAJO del mínimo del Spring,
+        el supuesto soporte ha fallado y el setup ya no es válido.
+
+        Devuelve dict con 'failed': bool y 'fail_date': fecha si falló.
+        """
+        if spring_info is None:
+            return {'failed': False, 'fail_date': None}
+
+        spring_idx = spring_info['index']
+        spring_low = spring_info['low']
+
+        if spring_idx >= len(df) - 1:
+            return {'failed': False, 'fail_date': None}
+
+        post_spring = df.iloc[spring_idx + 1:]
+        below_mask = post_spring['Close'] < spring_low
+        if below_mask.any():
+            first_fail_idx = below_mask.idxmax()
+            return {'failed': True, 'fail_date': str(first_fail_idx.date())}
+
+        return {'failed': False, 'fail_date': None}
+
+    def check_spring_stale(self, df, spring_idx, test_idx):
+        """
+        Un Spring SIN Test después de SPRING_MAX_AGE_WITHOUT_TEST días
+        pierde fiabilidad: el mercado debería haber retesteado el soporte
+        para confirmar la acumulación.
+        """
+        if test_idx is not None:
+            return False
+        days_since_spring = (len(df) - 1) - spring_idx
+        return days_since_spring > self.SPRING_MAX_AGE_WITHOUT_TEST
+
+    # =================== ATR ===================
+
+    def calculate_atr(self, df):
+        """ATR(14) para cálculo de Stop Loss."""
+        high  = df['High'].astype(float)
+        low   = df['Low'].astype(float)
+        prev_close = df['Close'].astype(float).shift(1)
+        tr = pd.concat([
+            high - low,
+            (high - prev_close).abs(),
+            (low  - prev_close).abs()
+        ], axis=1).max(axis=1)
+        return tr.rolling(self.ATR_PERIOD).mean()
+
+    # =================== OBV TREND EN LA BASE ===================
+
+    def calculate_obv_trend_in_base(self, df, spring_idx):
+        """
+        Calcula la tendencia del OBV durante la ventana de acumulación
+        previa al Spring. Un OBV con pendiente positiva indica compra
+        institucional neta (acumulación silenciosa).
+        Devuelve un valor normalizado: positivo = acumulación, negativo = distribución.
+        """
+        base_start = max(0, spring_idx - self.SUPPORT_LOOKBACK)
+        base_df = df.iloc[base_start:spring_idx]
+
+        if len(base_df) < 10:
+            return 0.0
+
+        closes  = base_df['Close'].values.astype(float)
+        volumes = base_df['Volume'].values.astype(float)
+
+        obv = np.zeros(len(closes))
+        for i in range(1, len(closes)):
+            if closes[i] > closes[i - 1]:
+                obv[i] = obv[i - 1] + volumes[i]
+            elif closes[i] < closes[i - 1]:
+                obv[i] = obv[i - 1] - volumes[i]
+            else:
+                obv[i] = obv[i - 1]
+
+        # Pendiente lineal normalizada por volumen total del período
+        x = np.arange(len(obv), dtype=float)
+        slope = float(np.polyfit(x, obv, 1)[0])
+        total_vol = volumes.sum()
+
+        if total_vol <= 0:
+            return 0.0
+
+        # Normalizado: fracción del volumen diario promedio que es neta compradora
+        return round(slope / (total_vol / len(obv)), 4)
+
+    # =================== ANCHURA DE BASE (WYCKOFF CAUSE) ===================
+
+    def calculate_base_width(self, df, spring_idx, s1):
+        """
+        Cuenta los días de trading donde el precio estuvo dentro del rango
+        de acumulación (S1 a S1×1.20) antes del Spring.
+        Más días en la base = mayor 'causa' = mayor potencial de subida.
+        """
+        base_start = max(0, spring_idx - self.SUPPORT_LOOKBACK)
+        base_df = df.iloc[base_start:spring_idx]
+
+        if base_df.empty:
+            return 0
+
+        upper_bound = s1 * 1.20
+        in_range = (base_df['Close'] >= s1 * 0.97) & (base_df['Close'] <= upper_bound)
+        return int(in_range.sum())
+
+    # =================== TIMING DEL TEST ===================
+
+    def score_test_timing(self, spring_idx, test_idx):
+        """
+        Puntúa el tiempo transcurrido entre Spring y Test.
+        Ideal: 5-25 días de trading. Demasiado rápido o lento reduce la fiabilidad.
+        Devuelve 0-20 pts.
+        """
+        if test_idx is None:
+            return 0.0
+
+        days = int(test_idx) - int(spring_idx)
+
+        if 5 <= days <= 25:
+            return 20.0                              # Timing ideal
+        elif days < 5:
+            return max(5.0, 20.0 - (5 - days) * 3) # Demasiado rápido
+        elif days <= 40:
+            return max(8.0, 20.0 - (days - 25))     # Ligeramente tarde
+        else:
+            return max(2.0, 8.0 - (days - 40) * 0.2) # Demasiado tarde
+
+    # =================== GESTIÓN DE RIESGO ===================
+
+    def calculate_risk_params(self, spring_info, df, s1, hvn_list):
+        """
+        SL  = Mínimo Spring − 0.5 × ATR(14)
+        TP1 = Resistencia local: máximo de los 60 días previos al Spring
+              (ventana ajustada para capturar el techo real del rango de acumulación)
+        TP2 = Siguiente HVN superior (si R:R ≥ 1:3) o mínimo R:R 1:3.5
+        """
+        try:
+            spring_idx  = spring_info['index']
+            entry_price = s1 * 1.002
+
+            atr_series  = self.calculate_atr(df)
+            spring_atr  = float(atr_series.iloc[spring_idx])
+            if not np.isfinite(spring_atr) or spring_atr <= 0:
+                spring_atr = float(atr_series.dropna().iloc[-1])
+
+            sl   = spring_info['low'] - 0.5 * spring_atr
+            risk = max(entry_price - sl, 1e-6)
+
+            # TP1: resistencia del rango de acumulación (últimos 60 días antes del Spring)
+            tp1_start  = max(0, spring_idx - 60)
+            pre_spring = df.iloc[tp1_start:spring_idx]['High']
+            tp1 = float(pre_spring.max()) if not pre_spring.empty else entry_price * 1.05
+
+            # TP2: siguiente HVN por encima de la entrada, o R:R 1:3.5
+            hvn_above = sorted(h for h in hvn_list if h > entry_price * 1.01)
+            if hvn_above and (hvn_above[0] - entry_price) / risk >= 3.0:
+                tp2 = hvn_above[0]
+            else:
+                tp2 = entry_price + 3.5 * risk
+
             return {
-                "signal": "Extendido",
-                "text": "Extendido",
-                "css_class": "extendido",
-                "is_actionable": False
+                'entry_price': round(entry_price, 2),
+                'sl':          round(sl, 4),
+                'tp1':         round(tp1, 2),
+                'tp2':         round(tp2, 2),
+                'risk_pct':    round(abs(entry_price - sl) / entry_price * 100, 2),
+                'rr_tp1':      round((tp1 - entry_price) / risk, 2),
+                'rr_tp2':      round((tp2 - entry_price) / risk, 2),
+                'atr':         round(spring_atr, 4),
             }
-        
-        return {
-            "signal": "Consolidando",
-            "text": "Consolidando",
-            "css_class": "consolidando",
-            "is_actionable": False
+        except Exception:
+            return None
+
+    # =================== SCORING DUAL: PROBABILIDAD + POTENCIAL ===================
+
+    def calculate_scores(self, spring_info, test_info, test_timing_score,
+                          market_health_score, industry_rank, obv_trend,
+                          base_width_days, risk_params):
+        """
+        Score de Probabilidad (0-60): ¿Es probable que el rebote ocurra?
+          - Salud del mercado    0-15 pts  (SPY sobre/bajo MA200)
+          - Timing del Test      0-20 pts  (5-25 días = ideal)
+          - OBV acumulación      0-15 pts  (pendiente positiva = acumulación real)
+          - Sector/industria     0-10 pts  (sector en top 50% del universo)
+
+        Score de Potencial (0-40): ¿Cuánto puede subir?
+          - Anchura de base      0-15 pts  (Wyckoff Cause: más días = más fuerza)
+          - Ratio R:R TP2        0-15 pts  (R:R ≥ 4 = máximo)
+          - Profundidad shake-out 0-10 pts  (wick más profundo = más absorción)
+
+        Total Wyckoff Score = Probabilidad + Potencial (0-100)
+        """
+        # --- PROBABILIDAD ---
+        prob = 0.0
+
+        # 1. Salud mercado (0-15)
+        prob += min(15.0, max(0.0, float(market_health_score)))
+
+        # 2. Test timing (0-20) — 0 si no hay test
+        prob += min(20.0, max(0.0, float(test_timing_score)))
+
+        # 3. OBV en base (0-15)
+        if obv_trend > 0:
+            obv_score = min(15.0, obv_trend * 30)
+            prob += max(0.0, obv_score)
+        # OBV negativo = distribución = 0 pts
+
+        # 4. Rango de industria (0-10)
+        rank = float(industry_rank)
+        if rank >= 75:
+            prob += 10.0
+        elif rank >= 60:
+            prob += 7.0
+        elif rank >= 50:
+            prob += 4.0
+        elif rank >= 35:
+            prob += 2.0
+
+        # --- POTENCIAL ---
+        pot = 0.0
+
+        # 1. Anchura de base — Wyckoff Cause (0-15)
+        if base_width_days >= 80:
+            pot += 15.0
+        elif base_width_days >= 50:
+            pot += 10.0
+        elif base_width_days >= 30:
+            pot += 6.0
+        elif base_width_days >= 15:
+            pot += 3.0
+
+        # 2. R:R TP2 (0-15)
+        rr_tp2 = float((risk_params or {}).get('rr_tp2', 0))
+        if rr_tp2 >= 4.0:
+            pot += 15.0
+        elif rr_tp2 >= 3.0:
+            pot += 10.0
+        elif rr_tp2 >= 2.0:
+            pot += 6.0
+        elif rr_tp2 >= 1.5:
+            pot += 3.0
+
+        # 3. Profundidad del shake-out (0-10)
+        depth = float(spring_info.get('spring_depth_pct', 0))
+        if depth >= 3.0:
+            pot += 10.0
+        elif depth >= 1.5:
+            pot += 6.0
+        elif depth >= 0.5:
+            pot += 3.0
+
+        probability_score = round(min(60.0, prob), 1)
+        potential_score   = round(min(40.0, pot),  1)
+        total_score       = round(probability_score + potential_score, 1)
+
+        return probability_score, potential_score, total_score
+
+    # =================== ANÁLISIS COMPLETO POR ACCIÓN ===================
+
+    def analyze_wyckoff_stock(self, symbol, df, rs_rating,
+                               market_healthy=True, market_health_score=10.0,
+                               industry_rank=50.0):
+        """
+        Pipeline Wyckoff completo:
+        VP → S1 → Confluencia → Spring → Test → Riesgo → Scoring dual.
+        """
+        result = {
+            'current_price': None, 'rs_rating': rs_rating,
+            # Volume Profile
+            'poc_level': None, 'hvn_count': 0,
+            # Soporte
+            's1_level': None,
+            # Confluencia
+            'confluence_valid': False, 'confluence_score': 0.0,
+            'nearest_confluence_level': None,
+            # Spring
+            'spring_detected': False, 'spring_info': None,
+            'spring_failed': False, 'spring_fail_date': None,
+            'spring_stale': False,
+            # Test
+            'test_detected': False, 'test_info': None,
+            # Métricas de mercado y contexto
+            'market_healthy': market_healthy,
+            'market_health_score': market_health_score,
+            'industry_rank': industry_rank,
+            # Métricas de calidad
+            'obv_trend_base': 0.0,
+            'base_width_days': 0,
+            'test_timing_days': None,
+            'test_timing_score': 0.0,
+            # Scores finales
+            'probability_score': 0.0,
+            'potential_score': 0.0,
+            'wyckoff_score': 0.0,
+            # Estado y riesgo
+            'entry_status': 'Sin Señal',
+            'is_actionable': False,  # True solo si el setup sigue vivo y operable
+            'risk_params': None,
         }
-    
-    def process_stocks_with_minervini(self, symbols, all_historical_data, rs_ratings, cache_manager, spy_df=None, industry_ranks=None):
-        """Aplica análisis Minervini a datos pre-descargados. Solo descarga ticker.info (fundamentales)."""
+
+        if len(df) < self.MIN_DATA_POINTS:
+            return result
+
+        result['current_price'] = float(df['Close'].iloc[-1])
+
+        # Paso 1: Volume Profile
+        poc, hvn_list = self.calculate_volume_profile(df)
+        result['poc_level'] = round(poc, 4) if poc is not None else None
+        result['hvn_count'] = len(hvn_list)
+
+        # Paso 2: Soporte Estructural
+        s1 = self.find_structural_support(df)
+        result['s1_level'] = round(s1, 4)
+
+        # Paso 3: Confluencia (obligatorio)
+        confluence_valid, confluence_score, nearest_level = self.check_s1_confluence(s1, poc, hvn_list)
+        result['confluence_valid'] = confluence_valid
+        result['confluence_score'] = confluence_score
+        result['nearest_confluence_level'] = round(float(nearest_level), 4) if nearest_level is not None else None
+
+        if not confluence_valid:
+            return result
+
+        # Paso 4: Spring
+        spring_info = self.detect_spring(df, s1)
+        if not spring_info:
+            return result
+
+        result['spring_detected'] = True
+        result['spring_info'] = spring_info
+        spring_idx = spring_info['index']
+
+        # Paso 5: Validación post-Spring (¿el Spring ha sido invalidado?)
+        invalidation = self.check_spring_invalidation(df, spring_info)
+        result['spring_failed'] = invalidation['failed']
+        result['spring_fail_date'] = invalidation['fail_date']
+
+        # Paso 6: Test
+        test_info = self.detect_test_signal(df, spring_idx, s1)
+        if test_info:
+            result['test_detected'] = True
+            result['test_info'] = test_info
+            result['test_timing_days'] = int(test_info['index']) - int(spring_idx)
+        test_idx = test_info['index'] if test_info else None
+
+        # Paso 7: Comprobar si está caduco (Spring sin Test tras N días)
+        result['spring_stale'] = self.check_spring_stale(df, spring_idx, test_idx)
+
+        # Paso 8: Determinar entry_status final (jerarquía: FALLIDO > CADUCO > activo)
+        if result['spring_failed']:
+            result['entry_status'] = f"Spring FALLIDO ({invalidation['fail_date']})"
+            result['is_actionable'] = False
+        elif result['spring_stale']:
+            days = (len(df) - 1) - spring_idx
+            result['entry_status'] = f'Spring Caducado (>{self.SPRING_MAX_AGE_WITHOUT_TEST}d sin Test, {days}d)'
+            result['is_actionable'] = False
+        elif test_info:
+            result['entry_status'] = 'Test Activo - ENTRADA' if test_info.get('is_current') else 'Test Completado'
+            result['is_actionable'] = True
+        else:
+            result['entry_status'] = 'Spring Detectado - Esperando Test'
+            result['is_actionable'] = True
+
+        # Paso 9: Métricas de calidad de la base
+        result['obv_trend_base'] = self.calculate_obv_trend_in_base(df, spring_idx)
+        result['base_width_days'] = self.calculate_base_width(df, spring_idx, s1)
+        result['test_timing_score'] = self.score_test_timing(spring_idx, test_idx)
+
+        # Paso 10: Gestión de riesgo
+        risk_params = self.calculate_risk_params(spring_info, df, s1, hvn_list)
+        result['risk_params'] = risk_params
+
+        # Paso 11: Scoring dual — Springs fallidos / caducados reciben score 0
+        if result['spring_failed'] or result['spring_stale']:
+            result['probability_score'] = 0.0
+            result['potential_score']   = 0.0
+            result['wyckoff_score']     = 0.0
+        else:
+            prob, pot, total = self.calculate_scores(
+                spring_info, test_info, result['test_timing_score'],
+                market_health_score, industry_rank, result['obv_trend_base'],
+                result['base_width_days'], risk_params
+            )
+            result['probability_score'] = prob
+            result['potential_score']   = pot
+            result['wyckoff_score']     = total
+
+        return result
+
+    # =================== PROCESAMIENTO MASIVO ===================
+
+    def process_stocks_wyckoff(self, symbols, all_historical_data, rs_ratings,
+                                spy_df=None, industry_ranks=None):
+        """
+        Procesa el universo completo aplicando el análisis Wyckoff Spring.
+        Precomputa salud del mercado y pasa el contexto a cada análisis individual.
+        """
+        industry_ranks = industry_ranks or {}
+
+        # Evaluar estado del mercado una sola vez para todos los análisis
+        market_healthy, market_health_score = self.check_market_health(spy_df)
+        if market_healthy:
+            print(f"✓ Mercado ALCISTA (S&P sobre MA200) — Score de mercado: {market_health_score}/15")
+        else:
+            print(f"⚠️ ALERTA: Mercado BAJISTA (S&P bajo MA200) — Score de mercado: {market_health_score}/15")
+            print(f"   Los Springs en mercado bajista tienen menor probabilidad de éxito.")
+
         stock_data = {}
-        failed_symbols = []
-        info_retry_count = 0
-        
-        for i, symbol in enumerate(tqdm(symbols, desc="    Analizando símbolos del lote", unit="símbolo", leave=False, ncols=120), 1):
-            max_retries = 3
-            retry_count = 0
-            success = False
-            
-            while retry_count < max_retries and not success:
-                try:
-                    # El historial ya está descargado, solo lo recuperamos del diccionario
-                    hist = all_historical_data.get(symbol)
-                    if hist is None or hist.empty:
-                        raise ValueError("Datos históricos no encontrados en el diccionario pre-cargado.")
-                    
-                    if len(hist) >= 250:  # Mínimo para análisis Minervini
-                        hist_with_ma = self.calculate_moving_averages(hist)
-                        
-                        stock_rs_rating = rs_ratings.get(symbol)
-                        # Calcular industry_rank para este símbolo
-                        symbol_industry = self.symbol_industries.get(symbol, {}).get('industry', 'Unknown')
-                        stock_industry_rank = industry_ranks.get(symbol_industry) if industry_ranks else None
-                        # La obtención de .info se ha movido DENTRO de get_minervini_analysis
-                        # para que solo se ejecute en acciones que pasan los filtros técnicos.
-                        minervini_analysis, had_info_retry = self.get_minervini_analysis(
-                            hist_with_ma, stock_rs_rating, symbol, cache_manager, self.session,
-                            debug_mode=False, spy_df=spy_df, industry_rank=stock_industry_rank
-                        )
+        failed = []
 
-                        if had_info_retry:
-                            info_retry_count += 1
+        print(f"\nIniciando análisis Wyckoff de {len(symbols)} candidatos...")
 
-                        # Siempre se procesa el resultado, ya que incluso las acciones rechazadas se guardan en el informe.
-
-                        stock_data[symbol] = {
-                            'data': hist_with_ma,
-                            'minervini_analysis': minervini_analysis,
-                            # La información de la compañía ahora se extrae del análisis si pasa los filtros
-                            'info': { # Simplificado: los datos ahora vienen directamente del análisis
-                                'name': minervini_analysis.get('company_name', symbol), # Fallback a symbol
-                                'sector': minervini_analysis.get('sector', 'N/A'),
-                                'industry': minervini_analysis.get('industry', 'N/A'),
-                                'market_cap': minervini_analysis.get('market_cap', 'N/A')
-                            } 
-                        }
-                        
-                        # Status reporting
-                        stage = minervini_analysis.get('stage_analysis', 'Unknown')
-                        rs_rating = minervini_analysis.get('rs_rating', 0)
-                        price = minervini_analysis.get('current_price', 0)
-                        score = minervini_analysis.get('minervini_score', 0)
-                        
-                        # Imprimir solo si la acción pasa todos los filtros para mantener el log limpio
-                        if minervini_analysis.get('passes_all_filters', False):
-                            status = f"✅ STAGE 2"
-                            reason_str = f"Score:{score} | RS:{rs_rating} | {stage}"
-                            retry_info = f" (retry {retry_count})" if retry_count > 0 else ""
-                            print(f"{status} {symbol} - ${price:.2f} - {reason_str}{retry_info} - {i}/{len(symbols)}")
-                        success = True
-                        
-                    else:
-                        # No se añade a failed_symbols porque es un descarte esperado, no un error.
-                        print(f"✗ {symbol} - Datos insuficientes (<250 días)")
-                        success = True
-                    
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    
-                    if "rate" in error_msg or "429" in error_msg or "too many requests" in error_msg:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            wait_time = 2 ** retry_count
-                            print(f"⏳ {symbol} - Rate limit - Retry {retry_count}/{max_retries} en {wait_time}s")
-                            time.sleep(wait_time)
-                        else:
-                            failed_symbols.append(symbol)
-                            print(f"❌ {symbol} - Rate limit persistente")
-                            break
-                    else:
-                        failed_symbols.append(symbol)
-                        print(f"✗ {symbol} - Error en el bucle principal de procesamiento: {e}")
-                        break
-                
-                # Se elimina la pausa de 0.5s por símbolo. La gestión de rate limits ya se hace
-                # con backoff exponencial en las llamadas a la API, haciendo esta pausa redundante y muy lenta.
-                    
-        return stock_data, failed_symbols, info_retry_count
-
-    def calculate_all_rs_scores(self, all_data):
-        """Paso 1 y 2 para RS Rating: Calcula el score de rendimiento para todas las acciones."""
-        print("\nCalculando scores de rendimiento para el RS Rating...")
-        rs_scores = {}
-        
-        for symbol, df in all_data.items():
+        for symbol in tqdm(symbols, desc="Análisis Wyckoff", unit="acción"):
             try:
-                if len(df) < 252:
+                df = all_historical_data.get(symbol)
+                if df is None or len(df) < self.MIN_DATA_POINTS:
                     continue
 
-                current_price = df['Close'].iloc[-1]
-                # Fórmula IBD con trimestres NO solapados: cada período es independiente.
-                # p3 = últimos 3 meses; p_q2/q3/q4 = trimestres anteriores individuales.
-                p3   = ((current_price / df['Close'].iloc[-63]) - 1) * 100 if len(df) >= 63 else 0
-                p_q2 = ((df['Close'].iloc[-63] / df['Close'].iloc[-126]) - 1) * 100 if len(df) >= 126 else 0
-                p_q3 = ((df['Close'].iloc[-126] / df['Close'].iloc[-189]) - 1) * 100 if len(df) >= 189 else 0
-                p_q4 = ((df['Close'].iloc[-189] / df['Close'].iloc[-252]) - 1) * 100
-                rs_score = (0.4 * p3) + (0.2 * p_q2) + (0.2 * p_q3) + (0.2 * p_q4)
-                rs_scores[symbol] = rs_score
-            except Exception:
-                continue # Ignorar errores en acciones individuales
-        
-        print(f"✓ Scores de rendimiento calculados para {len(rs_scores)} acciones.")
-        return pd.Series(rs_scores)
+                rs_rating    = float(rs_ratings.get(symbol, 0))
+                industry     = self.symbol_industries.get(symbol, {}).get('industry', 'Unknown')
+                industry_rank = float(industry_ranks.get(industry, 50.0))
 
-    def calculate_rs_ratings_from_scores(self, rs_scores):
-        """Paso 3 para RS Rating: Convierte scores en un ranking percentil (0-100)."""
-        if rs_scores.empty:
-            return pd.Series()
-        
-        # Usar rank(pct=True) para obtener el percentil (0.0 a 1.0)
-        rs_ratings = rs_scores.rank(pct=True) * 100
-        print(f"✓ RS Ratings (percentiles) calculados. Ejemplo: {rs_ratings.head(1).to_dict()}")
-        return rs_ratings.round(1)
+                analysis = self.analyze_wyckoff_stock(
+                    symbol, df, rs_rating,
+                    market_healthy=market_healthy,
+                    market_health_score=market_health_score,
+                    industry_rank=industry_rank,
+                )
 
-    def download_all_data(self, symbols, period="2y"):
-        """Descarga datos históricos en lotes para evitar rate limiting y fallos masivos."""
-        print(f"Iniciando descarga robusta de datos para {len(symbols)} símbolos...")
-        all_data = {}
-        batch_size = 75 # Reducido para mayor fiabilidad
-        total_batches = (len(symbols) + batch_size - 1) // batch_size
-        
-        for i in tqdm(range(total_batches), desc="Descargando datos históricos", unit="lote"):
-            start_idx = i * batch_size
-            end_idx = min(start_idx + batch_size, len(symbols))
-            batch_symbols = symbols[start_idx:end_idx]
-            
-            max_retries = 3
-            retry_count = 0
-            success = False
-            
-            while retry_count < max_retries and not success:
-                try:
-                    batch_data = yf.download(batch_symbols, period=period, group_by='ticker', auto_adjust=True, threads=True, progress=False, timeout=30)
-                    
-                    for symbol in batch_symbols:
-                        if symbol in batch_data.columns:
-                            # Asegurarse de que el df no está vacío y tiene datos válidos
-                            df = batch_data[symbol].dropna()
-                            if not df.empty:
-                                all_data[symbol] = df
-                    success = True
-                    
-                except Exception as e:
-                    retry_count += 1
-                    # Backoff más conservador para la descarga masiva: 10s, 20s, 40s
-                    wait_time = 10 * (2 ** (retry_count - 1))
-                    print(f"  ⚠️ Error en lote {i+1}: {e}. Reintentando en {wait_time}s... ({retry_count}/{max_retries})")
-                    time.sleep(wait_time)
-            
-            if not success:
-                print(f"  ❌ Lote {i+1} falló después de {max_retries} reintentos. Omitiendo este lote.")
-            
-        print(f"\n✓ Descarga masiva completada. Total de datos obtenidos para {len(all_data)} símbolos.")
-
-        print("Descargando datos del índice de referencia (^GSPC)...")
-        try:
-            spy_data = yf.download('^GSPC', period=period, auto_adjust=True, progress=False, threads=False, timeout=30)
-            if not spy_data.empty:
-                all_data['_MARKET_INDEX'] = spy_data
-                print("✓ Índice ^GSPC descargado correctamente.")
-            else:
-                print("⚠️ No se obtuvieron datos del índice ^GSPC.")
-        except Exception as e:
-            print(f"⚠️ Error descargando ^GSPC (RS Line desactivada): {e}")
-
-        return all_data
-    
-    def save_minervini_data(self, stock_data, filename_prefix="minervini_sepa_analysis"):
-        """Guarda los datos con análisis Minervini"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        all_data = []
-        stage2_data = []
-        
-        for symbol, data in stock_data.items():
-            hist_df = data['data']
-            analysis = data['minervini_analysis']
-            info = data['info']
-            
-            if not hist_df.empty:
-                row_data = {
-                    'Symbol': symbol,
-                    'Company_Name': info.get('name', 'N/A'),
-                    'Sector': info.get('sector', 'N/A'),
-                    'Industry': info.get('industry', 'N/A'),
-                    'Current_Price': analysis.get('current_price'),
-                    'Minervini_Score': analysis.get('minervini_score'),
-                    'MA_50': analysis.get('ma_50'),
-                    'MA_150': analysis.get('ma_150'),
-                    'MA_200': analysis.get('ma_200'),
-                    'High_52w': analysis.get('high_52w'),
-                    'Low_52w': analysis.get('low_52w'),
-                    'Distance_From_52w_Low': analysis.get('distance_from_52w_low'),
-                    'Distance_To_52w_High': analysis.get('distance_to_52w_high'),
-                    'RS_Rating': analysis.get('rs_rating'),
-                    'VCP_Detected': analysis.get('vcp_detected'),
-                    'Institutional_Accumulation': analysis.get('institutional_accumulation'),     # Basic
-                    'Institutional_Evidence': analysis.get('institutional_evidence'),             # Advanced
-                    'Institutional_Score': analysis.get('institutional_score'),                   # Detailed score
-                    'Volume_50d_Avg': analysis.get('volume_50d_avg'),
-                    'Earnings_Acceleration': analysis.get('earnings_acceleration'),
-                    'ROE_Strong': analysis.get('roe_strong'),
-                    'RS_Line_New_High': analysis.get('rs_line_new_high'),
-                    'Industry_Rank': analysis.get('industry_rank'),
-                    'Multi_Quarter_Accel': analysis.get('multi_quarter_accel'),
-                    'Accel_Quarters': analysis.get('accel_quarters'),
-                    'Stage_Analysis': analysis.get('stage_analysis'),
-                    'Passes_Technical': analysis.get('passes_minervini_technical'),
-                    'Entry_Signal': analysis.get('entry_signal'),
-                    'Entry_Signal_Text': analysis.get('entry_signal_text'),
-                    'Entry_Signal_Class': analysis.get('entry_signal_class'),
-                    'Is_Extended': analysis.get('is_extended'),
-                    'Passes_Fundamental': analysis.get('passes_minervini_fundamental'),
-                    'Passes_All_Filters': analysis.get('passes_all_filters'),
-                    'Filter_Reasons': "; ".join(analysis.get('filter_reasons', [])),
-                    'Data_Points': len(hist_df),
-                    'Start_Date': hist_df.index.min().strftime('%Y-%m-%d'),
-                    'End_Date': hist_df.index.max().strftime('%Y-%m-%d')
+                stock_data[symbol] = {
+                    'data': df,
+                    'wyckoff_analysis': analysis,
+                    'info': self.symbol_industries.get(symbol, {}),
                 }
-                
-                all_data.append(row_data)
-                
-                if analysis.get('passes_all_filters', False):
-                    stage2_data.append(row_data)
-        
-        # Guardar TODOS los datos
-        all_df = pd.DataFrame(all_data)
+            except Exception:
+                failed.append(symbol)
+
+        spring_count = sum(1 for d in stock_data.values() if d['wyckoff_analysis']['spring_detected'])
+        test_count   = sum(1 for d in stock_data.values() if d['wyckoff_analysis']['test_detected'])
+        print(f"\n✓ Análisis completado: {spring_count} springs | {test_count} tests activos | {len(failed)} errores")
+
+        return stock_data, failed
+
+    # =================== GUARDADO CSV ===================
+
+    def save_wyckoff_data(self, stock_data, filename_prefix="wyckoff_spring_analysis"):
+        """Guarda ALL_DATA (universo completo) y SPRINGS (señales con Spring detectado)."""
+        timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        all_rows, springs_rows = [], []
+
+        for symbol, data in stock_data.items():
+            df = data['data']
+            an = data['wyckoff_analysis']
+            info = data['info']
+            sp = an.get('spring_info') or {}
+            te = an.get('test_info') or {}
+            rp = an.get('risk_params') or {}
+
+            row = {
+                'Symbol':        symbol,
+                'Company_Name':  info.get('name', 'N/A'),
+                'Sector':        info.get('sector', 'N/A'),
+                'Industry':      info.get('industry', 'N/A'),
+                'Current_Price': an.get('current_price'),
+                'RS_Rating':     an.get('rs_rating'),
+                # Scores
+                'Wyckoff_Score':     an.get('wyckoff_score'),
+                'Probability_Score': an.get('probability_score'),
+                'Potential_Score':   an.get('potential_score'),
+                # Contexto de mercado
+                'Market_Healthy':       an.get('market_healthy'),
+                'Market_Health_Score':  an.get('market_health_score'),
+                'Industry_Rank':        an.get('industry_rank'),
+                # Volume Profile y Soporte
+                'S1_Level':             an.get('s1_level'),
+                'POC_Level':            an.get('poc_level'),
+                'HVN_Count':            an.get('hvn_count'),
+                'Confluence_Valid':     an.get('confluence_valid'),
+                'Confluence_Score':     an.get('confluence_score'),
+                'Nearest_Confluence':   an.get('nearest_confluence_level'),
+                # Spring
+                'Spring_Detected':      an.get('spring_detected'),
+                'Spring_Date':          sp.get('date', ''),
+                'Spring_Low':           sp.get('low', ''),
+                'Spring_Volume_Ratio':  sp.get('vol_ratio', ''),
+                'Spring_Close_Position':sp.get('close_position', ''),
+                'Spring_Depth_Pct':     sp.get('spring_depth_pct', ''),
+                'Spring_Failed':        an.get('spring_failed', False),
+                'Spring_Fail_Date':     an.get('spring_fail_date', ''),
+                'Spring_Stale':         an.get('spring_stale', False),
+                'Is_Actionable':        an.get('is_actionable', False),
+                # Calidad de la base
+                'OBV_Trend_Base':   an.get('obv_trend_base'),
+                'Base_Width_Days':  an.get('base_width_days'),
+                # Test
+                'Test_Detected':     an.get('test_detected'),
+                'Test_Date':         te.get('date', ''),
+                'Test_Volume_Ratio': te.get('vol_ratio', ''),
+                'Test_Timing_Days':  an.get('test_timing_days'),
+                'Test_Timing_Score': an.get('test_timing_score'),
+                # Estado y gestión de riesgo
+                'Entry_Status': an.get('entry_status'),
+                'Entry_Price':  rp.get('entry_price', ''),
+                'SL':           rp.get('sl', ''),
+                'TP1':          rp.get('tp1', ''),
+                'TP2':          rp.get('tp2', ''),
+                'Risk_Pct':     rp.get('risk_pct', ''),
+                'RR_TP1':       rp.get('rr_tp1', ''),
+                'RR_TP2':       rp.get('rr_tp2', ''),
+                'ATR':          rp.get('atr', ''),
+                # Metadatos
+                'Data_Points': len(df),
+                'Start_Date':  df.index.min().strftime('%Y-%m-%d'),
+                'End_Date':    df.index.max().strftime('%Y-%m-%d'),
+            }
+            all_rows.append(row)
+            # Solo guardar como Spring activo si está detectado Y operable
+            # (no fallido ni caduco)
+            if an.get('spring_detected') and an.get('is_actionable'):
+                springs_rows.append(row)
+
+        all_df = pd.DataFrame(all_rows)
         all_filename = f"{filename_prefix}_ALL_DATA_{timestamp}.csv"
         all_df.to_csv(all_filename, index=False)
         print(f"✓ Guardado: {all_filename}")
-        
-        # Guardar SOLO Stage 2 stocks que pasan todos los filtros
-        if stage2_data:
-            stage2_df = pd.DataFrame(stage2_data)
-            stage2_filename = f"{filename_prefix}_STAGE2_ONLY_{timestamp}.csv"
-            stage2_df.to_csv(stage2_filename, index=False)
-            print(f"✓ Guardado: {stage2_filename}")
+
+        if springs_rows:
+            springs_df = pd.DataFrame(springs_rows).sort_values('Wyckoff_Score', ascending=False)
+            springs_filename = f"{filename_prefix}_SPRINGS_{timestamp}.csv"
+            springs_df.to_csv(springs_filename, index=False)
+            print(f"✓ Guardado: {springs_filename} ({len(springs_rows)} springs)")
         else:
-            print("❌ Ninguna acción pasó todos los filtros Minervini")
-            stage2_df = pd.DataFrame()
-        
-        return all_df, stage2_df
+            print("❌ Ninguna acción detectó Spring de Wyckoff hoy")
+            springs_df = pd.DataFrame()
 
-class TickerInfoCacheManager:
-    """
-    Gestiona un caché de datos de tickers en un único archivo JSON para evitar
-    crear miles de archivos en el repositorio.
-    """
-    def __init__(self, cache_path="ticker_info_cache/ticker_cache.json", ttl_hours=168):
-        self.cache_path = cache_path
-        self.ttl_seconds = ttl_hours * 3600
-        self.cache_data = self._load_cache()
-        self.updated = False
-
-    def _load_cache(self):
-        """Carga el archivo de caché JSON si existe."""
-        if os.path.exists(self.cache_path):
-            try:
-                with open(self.cache_path, 'r') as f:
-                    print(f"✓ Caché de .info cargado desde {self.cache_path}")
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"⚠️ No se pudo cargar el caché de .info, se creará uno nuevo. Error: {e}")
-                return {}
-        print("ℹ️ No se encontró caché de .info, se creará uno nuevo.")
-        return {}
-
-    def get(self, symbol):
-        """Obtiene datos del caché si no están obsoletos."""
-        entry = self.cache_data.get(symbol)
-        if not entry:
-            return None
-
-        # 1. Validación por tiempo (TTL)
-        if (time.time() - entry.get('timestamp', 0)) >= self.ttl_seconds:
-            return None # Expirado por tiempo
-
-        # 2. Validación por fecha de beneficios (la nueva lógica inteligente)
-        earnings_date_str = entry.get('earnings_date')
-        if earnings_date_str:
-            try:
-                # Compara la fecha de hoy con la fecha de beneficios guardada.
-                # Si hoy es igual o posterior a la fecha de beneficios, el caché está obsoleto.
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                if today_str >= earnings_date_str:
-                    print(f"  - ℹ️ Invalidando caché para {symbol} por fecha de beneficios pasada ({earnings_date_str}).")
-                    return None # Expirado por evento de beneficios
-            except Exception:
-                pass # Si hay error en la fecha, se ignora y se confía en el TTL
-
-        return entry.get('data')
-
-    def get_stale(self, symbol):
-        """Obtiene datos del caché, incluso si están obsoletos (para fallback)."""
-        if symbol in self.cache_data:
-            return self.cache_data[symbol].get('data')
-        return None
-
-    def set(self, symbol, data, calendar_data=None):
-        """Actualiza el caché en memoria para un símbolo."""
-        self.cache_data[symbol] = {
-            'timestamp': time.time(),
-            'data': data,
-            'earnings_date': self._extract_earnings_date(calendar_data)
-        }
-        self.updated = True
-
-    def save_cache_if_updated(self):
-        """Guarda el caché en disco solo si ha habido cambios."""
-        if self.updated:
-            print(f"\n💾 Guardando caché de .info actualizado en {self.cache_path}...")
-            cache_dir = os.path.dirname(self.cache_path)
-            if cache_dir:
-                os.makedirs(cache_dir, exist_ok=True)
-            
-            with open(self.cache_path, 'w') as f:
-                json.dump(self.cache_data, f)
-            print("✓ Caché guardado.")
-        else:
-            print("\nℹ️ No hubo actualizaciones en el caché de .info, no se guarda nada.")
-
-    @staticmethod
-    def _extract_earnings_date(calendar_data):
-        """Extrae y formatea la próxima fecha de beneficios del diccionario de calendario."""
-        if not calendar_data or 'Earnings Date' not in calendar_data:
-            return None
-        
-        try:
-            # La fecha puede venir como una lista de datetimes
-            earnings_date = calendar_data['Earnings Date'][0]
-            return earnings_date.strftime('%Y-%m-%d')
-        except (TypeError, IndexError, AttributeError):
-            # Si el formato es inesperado, devuelve None
-            return None
-
-def _compute_quarterly_earnings_growth(ticker_info_dict):
-    """
-    Lee '_quarterly_raw_growth' del dict (lista de floats, más reciente primero)
-    y devuelve (multi_quarter_accel: bool|None, growth_rates: list).
-    multi_quarter_accel es True si los últimos 2 trimestres tienen YoY growth >= 0.25
-    Y el más reciente supera al anterior (aceleración real).
-    Devuelve None si hay menos de 2 tasas disponibles.
-    """
-    min_growth = 0.25
-    growth_rates = ticker_info_dict.get('_quarterly_raw_growth', [])
-    if not growth_rates or len(growth_rates) < 2:
-        return None, growth_rates
-    # Más reciente es índice 0
-    recent = growth_rates[0]
-    prior = growth_rates[1]
-    multi_quarter_accel = (recent >= min_growth) and (prior >= min_growth) and (recent > prior)
-    return multi_quarter_accel, growth_rates
+        return all_df, springs_df
 
 
-def fetch_info_for_symbol(symbol, cache_manager, session=None, max_retries=3):
-    """
-    Obtiene .info de yfinance de forma robusta, con reintentos y fallback a caché.
-    Devuelve (info, tuvo_reintentos).
-    """
-    # 1. Intentar obtener datos frescos del caché (TTL de varias horas)
-    cached_info = cache_manager.get(symbol)
-    if cached_info:
-        return cached_info, False # No hubo reintentos
+# =================== PIPELINE PRINCIPAL ===================
 
-    # 2. Si no hay caché fresco, intentar llamada a la API con reintentos
-    for attempt in range(max_retries):
-        try:
-            # Usar la sesión compartida para robustez. El timeout se gestiona a nivel de la sesión.
-            ticker = yf.Ticker(symbol, session=session)
-            ticker_info = ticker.info  # Obtiene los datos fundamentales
-            
-            try:
-                calendar_data = ticker.calendar # Obtiene la fecha de beneficios
-            except Exception:
-                # Si falla la obtención del calendario, continuamos sin él.
-                # El caché no tendrá fecha de beneficios y se basará solo en el TTL.
-                calendar_data = None
-            
-            if ticker_info and 'symbol' in ticker_info:
-                try:
-                    q_stmt = ticker.quarterly_income_stmt
-                    if q_stmt is not None and not q_stmt.empty:
-                        eps_row = None
-                        for label in ['Net Income', 'Diluted EPS', 'Basic EPS']:
-                            if label in q_stmt.index:
-                                eps_row = q_stmt.loc[label].dropna().sort_index(ascending=False)
-                                break
-                        if eps_row is not None and len(eps_row) >= 5:
-                            growth_rates = []
-                            vals = eps_row.values
-                            for i in range(min(3, len(vals) - 4)):
-                                curr, prior = vals[i], vals[i + 4]
-                                if pd.notna(curr) and pd.notna(prior) and prior != 0:
-                                    growth_rates.append(round((curr - prior) / abs(prior), 4))
-                            if growth_rates:
-                                ticker_info['_quarterly_raw_growth'] = growth_rates
-                except Exception:
-                    pass
-                cache_manager.set(symbol, ticker_info, calendar_data)
-                # Si tuvo éxito pero no en el primer intento, fue un reintento exitoso.
-                return ticker_info, attempt > 0
-            else:
-                raise ValueError("API devolvió .info vacío o inválido.")
-
-        except Exception as e:
-            error_msg = str(e).lower()
-            is_rate_limit_error = (
-                "rate" in error_msg or 
-                "429" in error_msg or 
-                "too many requests" in error_msg or
-                "401" in error_msg # yfinance a veces usa 401 para bloqueos temporales
-            )
-
-            # Reintentar SOLO si es un error de rate limit y aún quedan intentos.
-            if is_rate_limit_error and attempt < max_retries - 1:
-                wait_time = 5 * (2 ** attempt) # Exponential backoff: 5s, 10s
-                print(f"  - ⏳ Rate limit detectado para {symbol}. Pausa de {wait_time}s... (Intento {attempt + 1}/{max_retries})")
-                time.sleep(wait_time)
-            else:
-                # Si es otro tipo de error (ej. datos no existen) o se agotaron los reintentos,
-                # no tiene sentido seguir. Salimos del bucle de reintentos inmediatamente.
-                break
-
-    # 3. Después de todos los reintentos, usar caché obsoleto como último recurso
-    stale_info = cache_manager.get_stale(symbol)
-    if not stale_info:
-        # Solo loguear si ni siquiera hay caché obsoleto, es un fallo total.
-        # Este es un evento raro y digno de ser logueado.
-        print(f"  - ❌ API falló para {symbol} tras {max_retries} intentos y sin caché de fallback.")
-    
-    return stale_info if stale_info else {}, True  # Tuvo que reintentar (y falló)
-
-def _run_analysis_pipeline(screener, cache_manager):
-    """
-    Ejecuta el pipeline completo de análisis: obtención de símbolos, descarga de datos,
-    cálculo de RS y procesamiento Minervini.
-    """
+def _run_analysis_pipeline(screener):
+    """Ejecuta el pipeline completo: símbolos → datos → RS → Wyckoff."""
     print("Obteniendo símbolos NYSE + NASDAQ...")
     all_symbols = screener.get_nyse_nasdaq_symbols()
     original_count = len(all_symbols)
 
-    # Filtro final para eliminar tickers con caracteres especiales que puedan causar problemas
     all_symbols = [s for s in all_symbols if '^' not in s and '.' not in s and '/' not in s]
-    print(f"✓ Símbolos filtrados (eliminados preferentes/warrants): {original_count - len(all_symbols)} eliminados")
-    print(f"Total de acciones a analizar: {len(all_symbols)}")
+    print(f"✓ Filtrados {original_count - len(all_symbols)} warrants/preferentes")
+    print(f"Total acciones a analizar: {len(all_symbols)}")
 
     if not all_symbols:
         print("❌ No se pudieron obtener símbolos")
         return None, None
 
-    # PASO 1: Descarga masiva de datos
-    symbols_to_process = all_symbols
-    all_historical_data = screener.download_all_data(symbols_to_process)
-
-    # Extraer el índice de mercado antes de calcular RS (no debe contaminar el cálculo)
+    # Paso 1: Descarga masiva (incluye ^GSPC)
+    all_historical_data = screener.download_all_data(all_symbols)
     spy_df = all_historical_data.pop('_MARKET_INDEX', None)
 
-    # PASO 2: Calcular scores de rendimiento
-    rs_scores = screener.calculate_all_rs_scores(all_historical_data)
-
-    # PASO 3: Calcular RS Ratings finales (percentiles)
+    # Paso 2: RS Rating
+    rs_scores  = screener.calculate_all_rs_scores(all_historical_data)
     rs_ratings = screener.calculate_rs_ratings_from_scores(rs_scores)
 
-    # PASO 3.5: Ranking de grupos industriales
+    # Paso 3: Ranking industrial
     print("\nCalculando ranking de grupos industriales...")
     industry_ranks = screener.rank_industries_by_rs(rs_ratings)
     print(f"✓ {len(industry_ranks)} grupos industriales rankeados.")
 
-    # PASO 3.6: Pre-filtro por RS Rating + ordenar mejores candidatos primero
-    # Eliminamos antes del análisis todo el universo con RS bajo, que nunca pasaría el filtro.
-    # El margen de 2 puntos evita descartar acciones justo en el límite por redondeo.
-    rs_prefilter = screener.MIN_RS_RATING - 2
-    eligible_rs = rs_ratings[rs_ratings >= rs_prefilter].sort_values(ascending=False)
-    symbols_to_process = [s for s in eligible_rs.index if s in all_historical_data]
-    eliminated = len(all_symbols) - len(symbols_to_process)
-    print(f"\n✓ Pre-filtro RS ≥ {rs_prefilter}: {len(symbols_to_process)} candidatos "
-          f"({eliminated} descartados por RS insuficiente, ordenados de mayor a menor RS).\n")
-
-    if not symbols_to_process:
-        print("❌ Ningún símbolo supera el umbral mínimo de RS Rating.")
-        return {}, []
-
-    # PASO 4: Análisis Minervini — proceso único sin lotes artificiales
-    print(f"Iniciando análisis Minervini SEPA de {len(symbols_to_process)} candidatos...")
-    all_stock_data, all_failed, _ = screener.process_stocks_with_minervini(
-        symbols_to_process, all_historical_data, rs_ratings, cache_manager,
+    # Paso 4: Análisis Wyckoff — sin pre-filtro por RS (Springs en cualquier stock)
+    symbols_to_process = list(all_historical_data.keys())
+    all_stock_data, all_failed = screener.process_stocks_wyckoff(
+        symbols_to_process, all_historical_data, rs_ratings,
         spy_df=spy_df, industry_ranks=industry_ranks
     )
 
-    passed_count = sum(1 for d in all_stock_data.values() if d['minervini_analysis']['passes_all_filters'])
-    print(f"\n✓ Análisis completado: {passed_count} Stage 2 encontradas | {len(all_failed)} errores.")
     return all_stock_data, all_failed
 
+
 def _generate_final_report(screener, all_stock_data, all_failed):
-    """Genera y muestra el reporte final con los resultados del análisis."""
-    print(f"\n=== RESUMEN FINAL MINERVINI ===")
+    """Genera y muestra el TOP 10 final con scoring dual."""
+    print(f"\n=== RESUMEN FINAL WYCKOFF SPRING ===")
     print(f"Procesadas: {len(all_stock_data)} | Errores: {len(all_failed)}")
 
-    all_summary, stage2_summary = screener.save_minervini_data(all_stock_data)
-    stage2_count = len(stage2_summary) if not stage2_summary.empty else 0
-    success_rate = (stage2_count / len(all_stock_data)) * 100 if len(all_stock_data) > 0 else 0
+    all_summary, springs_summary = screener.save_wyckoff_data(all_stock_data)
 
-    print(f"Acciones Stage 2 (pasan todos los filtros): {stage2_count}")
-    print(f"Tasa de éxito Minervini: {success_rate:.1f}%")
+    spring_count = len(springs_summary) if not springs_summary.empty else 0
+    test_count   = 0
+    if not springs_summary.empty and 'Test_Detected' in springs_summary.columns:
+        test_count = int(springs_summary['Test_Detected'].sum())
 
-    if not stage2_summary.empty:
-        top_10 = stage2_summary.nlargest(10, 'Minervini_Score')
-        print(f"\n🔝 TOP 10 ACCIONES (ordenadas por Minervini Score):")
+    # Estadísticas de invalidación sobre TODO el universo
+    total_springs_raw = 0
+    failed_count = 0
+    stale_count = 0
+    if not all_summary.empty:
+        if 'Spring_Detected' in all_summary.columns:
+            total_springs_raw = int(all_summary['Spring_Detected'].sum())
+        if 'Spring_Failed' in all_summary.columns:
+            failed_count = int(all_summary['Spring_Failed'].sum())
+        if 'Spring_Stale' in all_summary.columns:
+            stale_count = int(all_summary['Spring_Stale'].sum())
+
+    pct = spring_count / len(all_stock_data) * 100 if all_stock_data else 0
+    print(f"\nSprings detectados (brutos):  {total_springs_raw}")
+    print(f"  └── Fallidos (invalidados): {failed_count}")
+    print(f"  └── Caducados (sin Test):   {stale_count}")
+    print(f"  └── ACTIVOS y operables:    {spring_count} ({pct:.1f}% del universo)")
+    print(f"Tests activos (zona de entrada): {test_count}")
+
+    if not springs_summary.empty:
+        # Ordenar: primero "Test Activo", luego por Wyckoff Score
+        springs_summary = springs_summary.copy()
+        springs_summary['_priority'] = springs_summary['Entry_Status'].apply(
+            lambda x: 0 if 'Test Activo' in str(x) else (1 if 'Test Completado' in str(x) else 2)
+        )
+        top_10 = springs_summary.sort_values(
+            ['_priority', 'Wyckoff_Score'], ascending=[True, False]
+        ).head(10)
+
+        print(f"\n{'='*90}")
+        print(f"🔝 TOP 10 ACCIONES — WYCKOFF SPRING (Prob + Potencial = Total)")
+        print(f"{'='*90}")
         for i, (_, row) in enumerate(top_10.iterrows()):
-            print(f"{i+1:2d}. {row['Symbol']:6s} | Score:{row['Minervini_Score']:5.1f} | RS:{row['RS_Rating']:5.1f} | Precio:${row['Current_Price']:7.2f} | Señal: {row['Entry_Signal']}")
+            prob  = row.get('Probability_Score', 0)
+            pot   = row.get('Potential_Score', 0)
+            total = row.get('Wyckoff_Score', 0)
+            rp    = row.get('RR_TP2', '')
+            status = str(row.get('Entry_Status', ''))
+            mkt    = "✅" if row.get('Market_Healthy', True) else "⚠️"
+            print(
+                f"{i+1:2d}. {row['Symbol']:6s} | {mkt} | "
+                f"Score: {total:5.1f} (P:{prob:.0f}+Pot:{pot:.0f}) | "
+                f"RS:{row.get('RS_Rating',0):5.1f} | "
+                f"Precio:${row.get('Current_Price',0):7.2f} | "
+                f"R:R={rp} | {status}"
+            )
 
-        # NUEVO: Resumen de los tipos de señales de entrada encontradas
-        print(f"\n=== TIPOS DE SEÑALES DE ENTRADA (STAGE 2) ===")
-        signal_distribution = stage2_summary['Entry_Signal'].value_counts()
-        for signal, count in signal_distribution.items():
-            percentage = (count / stage2_count) * 100
-            print(f"  {signal}: {count} acciones ({percentage:.1f}%)")
+        print(f"\n=== DISTRIBUCIÓN DE SEÑALES ===")
+        for status, count in springs_summary['Entry_Status'].value_counts().items():
+            print(f"  {status}: {count}")
 
-    stage_distribution = all_summary['Stage_Analysis'].value_counts()
-    print(f"\n=== DISTRIBUCIÓN POR STAGE ===")
-    for stage, count in stage_distribution.items():
-        percentage = (count / len(all_summary)) * 100
-        avg_score = all_summary[all_summary['Stage_Analysis'] == stage]['Minervini_Score'].mean()
-        print(f"  {stage}: {count} acciones ({percentage:.1f}%) - Score promedio: {avg_score:.1f}")
+        # Estadísticas de scoring
+        print(f"\n=== ESTADÍSTICAS DE SCORING ===")
+        print(f"  Score promedio (springs): {springs_summary['Wyckoff_Score'].mean():.1f}/100")
+        print(f"  Score prob. promedio:     {springs_summary['Probability_Score'].mean():.1f}/60")
+        print(f"  Score potencial promedio: {springs_summary['Potential_Score'].mean():.1f}/40")
+        print(f"  OBV positivo (acumulación): {(springs_summary['OBV_Trend_Base'] > 0).sum()} / {len(springs_summary)}")
+        print(f"  Base > 50 días:             {(springs_summary['Base_Width_Days'] >= 50).sum()} / {len(springs_summary)}")
 
-    print(f"\n=== RAZONES DE ELIMINACIÓN (TOP 10) ===")
-    reasons = all_summary[~all_summary['Passes_All_Filters']]['Filter_Reasons'].str.split(';').explode().str.strip()
-    top_reasons = reasons[reasons.ne('') & reasons.ne('nan')].value_counts().nlargest(10)
-    for reason, count in top_reasons.items():
-        percentage = (count / len(all_summary)) * 100
-        print(f"  {reason}: {count} acciones ({percentage:.1f}%)")
 
 def main():
-    """Función principal para GitHub Actions - Análisis Minervini SEPA completo"""
-    print("=== MINERVINI SEPA AUTOMATED SCREENER ===")
-    print("Sistema basado en metodología SEPA de Mark Minervini")
-    print("11 filtros: 8 técnicos + 3 fundamentales + Scoring System\n")
-    
-    screener = MinerviniStockScreener() # La sesión de red se crea aquí
-    cache_manager = TickerInfoCacheManager()
-    
-    # Ejecutar el pipeline de análisis
-    all_stock_data, all_failed = _run_analysis_pipeline(screener, cache_manager)
+    """Función principal — Wyckoff Spring Swing Trading Screener."""
+    print("=== WYCKOFF SPRING SCREENER ===")
+    print("Estrategia: Swing Trading Macro | Temporalidad: Diario (1D)")
+    print("Metodología: Fase C Wyckoff + Volume Profile (VPVR)")
+    print("Filtro mercado: S&P 500 sobre MA200 = mercado alcista\n")
 
-    # Generar el reporte final si el pipeline tuvo éxito
+    screener = WyckoffSpringScreener()
+    all_stock_data, all_failed = _run_analysis_pipeline(screener)
+
     if all_stock_data:
         _generate_final_report(screener, all_stock_data, all_failed)
-        # Guardar el caché al final de todo el proceso
-        cache_manager.save_cache_if_updated()
     else:
         print("❌ No se obtuvieron datos")
         exit(1)
+
 
 if __name__ == "__main__":
     main()

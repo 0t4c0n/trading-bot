@@ -1,4 +1,4 @@
-# create_dashboard_data.py - VERSIÓN MINERVINI SEPA CON SCORING
+# create_dashboard_data.py - Wyckoff Spring Strategy Dashboard
 import pandas as pd
 import numpy as np
 import json
@@ -6,35 +6,45 @@ import glob
 import os
 from datetime import datetime
 
-def get_stage_icon(stage):
-    """Devuelve icono según Stage Analysis"""
-    if "Stage 2" in stage:
-        return "🚀"
-    elif "Stage 1" in stage or "Stage 3" in stage:
-        return "⏳"
-    elif "Stage 4" in stage:
-        return "📉"
+
+def get_entry_status_icon(status):
+    if 'Test Activo' in str(status):
+        return "🎯"
+    elif 'Test Completado' in str(status):
+        return "✅"
+    elif 'Spring Detectado' in str(status):
+        return "⚡"
     else:
-        return "❓"
+        return "⏳"
+
 
 def get_rs_strength_label(rs_rating):
-    """Devuelve etiqueta de fortaleza relativa"""
-    if rs_rating >= 90:
-        return "💪 Exceptional"
-    elif rs_rating >= 80:
-        return "🔥 Strong"
-    elif rs_rating >= 70:
-        return "✅ Good"
-    elif rs_rating >= 50:
-        return "⚠️ Average"
-    else:
-        return "❌ Weak"
+    rs = float(rs_rating) if rs_rating and str(rs_rating) != 'nan' else 0
+    if rs >= 90:   return "Excepcional"
+    elif rs >= 80: return "Fuerte"
+    elif rs >= 70: return "Bueno"
+    elif rs >= 50: return "Medio"
+    else:          return "Débil"
+
+
+def safe_float(val, default=0.0):
+    try:
+        f = float(val)
+        return f if np.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_bool(val):
+    if isinstance(val, bool):   return val
+    if isinstance(val, (int, float)): return bool(val)
+    if isinstance(val, str):    return val.strip().lower() in ('true', '1', 'yes')
+    return False
+
 
 def convert_numpy_types(obj):
-    """Convierte tipos numpy/pandas a tipos JSON serializables"""
-    import numpy as np
     if isinstance(obj, dict):
-        return {key: convert_numpy_types(value) for key, value in obj.items()}
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_numpy_types(item) for item in obj]
     elif isinstance(obj, np.integer):
@@ -43,344 +53,344 @@ def convert_numpy_types(obj):
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif pd.isna(obj):
+    elif isinstance(obj, float) and not np.isfinite(obj):
         return None
-    else:
-        return obj
-
-def create_minervini_dashboard_data():
-    """Convierte los resultados Minervini en datos JSON para dashboard"""
-    
-    print("=== CREATE MINERVINI DASHBOARD DATA ===")
-    
     try:
-        # Buscar archivos Minervini
-        stage2_files = glob.glob("*_STAGE2_ONLY_*.csv")
-        all_files = glob.glob("*_ALL_DATA_*.csv")
-        
-        print(f"Archivos STAGE2 encontrados: {stage2_files}")
+        if pd.isna(obj):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return obj
+
+
+def create_wyckoff_dashboard_data():
+    """Convierte los resultados Wyckoff en datos JSON para el dashboard."""
+
+    print("=== CREATE WYCKOFF DASHBOARD DATA ===")
+
+    try:
+        springs_files = glob.glob("wyckoff_spring_analysis_SPRINGS_*.csv")
+        all_files     = glob.glob("wyckoff_spring_analysis_ALL_DATA_*.csv")
+
+        print(f"Archivos SPRINGS encontrados: {springs_files}")
         print(f"Archivos ALL_DATA encontrados: {all_files}")
-        
+
         if not all_files:
             print("❌ No se encontraron archivos ALL_DATA")
             print("💡 Ejecuta primero: python script_automated.py")
             return False
-        
-        # Obtener archivos más recientes
-        latest_all = max(all_files, key=os.path.getctime)
-        latest_stage2 = max(stage2_files, key=os.path.getctime) if stage2_files else None
-        
-        print(f"Procesando archivo ALL_DATA: {latest_all}")
-        print(f"Procesando archivo STAGE2: {latest_stage2 if latest_stage2 else 'Ninguno'}")
-        
-        # Leer datos
+
+        latest_all     = max(all_files,     key=os.path.getctime)
+        latest_springs = max(springs_files, key=os.path.getctime) if springs_files else None
+
+        print(f"Procesando ALL_DATA: {latest_all}")
+        print(f"Procesando SPRINGS:  {latest_springs or 'Ninguno'}")
+
         try:
             all_df = pd.read_csv(latest_all)
             print(f"✓ ALL_DATA leído: {len(all_df)} filas")
         except Exception as e:
             print(f"❌ Error leyendo ALL_DATA: {e}")
             return False
-            
+
         try:
-            stage2_df = pd.read_csv(latest_stage2) if latest_stage2 else pd.DataFrame()
-            print(f"✓ STAGE2 leído: {len(stage2_df)} filas")
+            springs_df = pd.read_csv(latest_springs) if latest_springs else pd.DataFrame()
+            print(f"✓ SPRINGS leído: {len(springs_df)} filas")
         except Exception as e:
-            print(f"⚠️ Error leyendo STAGE2 (usando DataFrame vacío): {e}")
-            stage2_df = pd.DataFrame()
-        
-        # Crear estructura del dashboard Minervini
+            print(f"⚠️ Error leyendo SPRINGS (DataFrame vacío): {e}")
+            springs_df = pd.DataFrame()
+
+        # ── Estado del mercado ──────────────────────────────────────────────
+        market_healthy = False
+        market_health_score = 0.0
+        if 'Market_Healthy' in all_df.columns and not all_df.empty:
+            market_healthy      = bool(all_df['Market_Healthy'].iloc[0])
+            market_health_score = safe_float(all_df['Market_Health_Score'].iloc[0])
+
+        # ── Métricas de resumen ─────────────────────────────────────────────
+        spring_count      = len(springs_df)
+        test_active_count = 0
+        if not springs_df.empty and 'Entry_Status' in springs_df.columns:
+            test_active_count = int(
+                springs_df['Entry_Status'].str.contains('Test Activo', na=False).sum()
+            )
+
+        # Estadísticas de invalidación (sobre el universo completo)
+        total_springs_raw = int(all_df['Spring_Detected'].sum()) \
+                            if 'Spring_Detected' in all_df.columns else 0
+        failed_count = int(all_df['Spring_Failed'].sum()) \
+                       if 'Spring_Failed' in all_df.columns else 0
+        stale_count  = int(all_df['Spring_Stale'].sum()) \
+                       if 'Spring_Stale' in all_df.columns else 0
+
+        avg_prob = round(springs_df['Probability_Score'].mean(), 1) \
+                   if not springs_df.empty and 'Probability_Score' in springs_df.columns else 0
+        avg_pot  = round(springs_df['Potential_Score'].mean(), 1) \
+                   if not springs_df.empty and 'Potential_Score' in springs_df.columns else 0
+
         dashboard_data = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp":   datetime.now().isoformat(),
             "market_date": datetime.now().strftime("%Y-%m-%d"),
-            "summary": {
-                "total_analyzed": len(all_df) if not all_df.empty else 0,
-                "stage2_stocks": len(stage2_df),
-                "success_rate": round((len(stage2_df) / len(all_df) * 100), 1) if not all_df.empty and len(stage2_df) > 0 else 0,
-                "avg_minervini_score": round(all_df['Minervini_Score'].mean(), 1) if not all_df.empty and 'Minervini_Score' in all_df.columns else 0,
-                "message": "Stage 2 stocks encontrados" if len(stage2_df) > 0 else "Sin Stage 2 stocks hoy"
+            "strategy":    "Wyckoff Spring + Volume Profile",
+
+            # Estado del mercado (visible en portada del dashboard)
+            "market_context": {
+                "healthy":      market_healthy,
+                "health_score": market_health_score,
+                "status_label": "ALCISTA ✅" if market_healthy else "BAJISTA ⚠️",
+                "description":  "S&P 500 sobre MA200 — condiciones favorables para Springs"
+                                if market_healthy
+                                else "S&P 500 bajo MA200 — Springs con menor probabilidad de éxito"
             },
+
+            "summary": {
+                "total_analyzed":     len(all_df),
+                "springs_detected":   spring_count,        # solo operables (activos)
+                "springs_raw_total":  total_springs_raw,   # incluye fallidos/caducos
+                "springs_failed":     failed_count,        # invalidados (Close bajo Spring Low)
+                "springs_stale":      stale_count,         # >30 días sin Test
+                "tests_active":       test_active_count,
+                "detection_rate":     round(spring_count / len(all_df) * 100, 2) if len(all_df) > 0 else 0,
+                "avg_prob_score":     avg_prob,
+                "avg_pot_score":      avg_pot,
+                "message": f"{spring_count} Springs ACTIVOS | {test_active_count} en zona de entrada "
+                           f"| {failed_count} fallidos, {stale_count} caducos | "
+                           f"Mercado {'alcista ✅' if market_healthy else 'bajista ⚠️'}"
+            },
+
             "top_picks": [],
             "market_analysis": {},
-            "minervini_criteria": {
-                "technical_filters": [
-                    "Price > MA150 y MA200",
-                    "MA150 > MA200", 
-                    "MA200 trending up ≥1 mes",
-                    "Price > MA50 > MA150 > MA200",
-                    "Price ≥30% above 52w low",
-                    "Price within 25% of 52w high",
-                    "RS Rating ≥70",
-                    "VCP/Institutional accumulation"
+
+            "wyckoff_criteria": {
+                "volume_profile":      f"VPVR {252} días (1 año) → POC + HVN",
+                "structural_support":  "Mínimo estructural S1 de 130 días (~6 meses) "
+                                       "ESTABLECIDO antes de la ventana de búsqueda del Spring (60 días)",
+                "confluence_filter":   "S1 dentro del 1% de un HVN o del POC (score gradual)",
+                "spring_window":       "Búsqueda del Spring limitada a los últimos 60 días (frescura)",
+                "spring_conditions": [
+                    "Low < S1 (perfora soporte)",
+                    "Close > S1 (cierra encima)",
+                    "Cierre en tercio superior ≥67% de la vela",
+                    "Volumen > SMA(20) × 1.5"
                 ],
-                "fundamental_filters": [
-                    "Strong Earnings ≥25% YoY",
-                    "Revenue ≥20% + ROE ≥17%",
-                    "Institutional Evidence (5/8 criterios híbridos)"
+                "test_conditions": [
+                    "Retroceso a S1 (±0.5%)",
+                    "Volumen < SMA(20)",
+                    "Volumen decreciente respecto al día anterior",
+                    "Timing ideal: 5-25 días tras el Spring"
                 ],
-                "scoring_system": {
-                    "stage_analysis": "0-40 pts (Stage 2 = 40)",
-                    "rs_rating": "0-30 pts (RS 90+ = 27+)",
-                    "position_52w": "0-20 pts (cerca high + lejos low)",
-                    "patterns": "0-10 pts (VCP + accumulation)"
+                "scoring": {
+                    "probability_0_60": {
+                        "market_health":  "0-15 pts (SPY sobre/bajo MA200)",
+                        "test_timing":    "0-20 pts (5-25 días = ideal)",
+                        "obv_base":       "0-15 pts (OBV alcista = acumulación)",
+                        "sector_rank":    "0-10 pts (sector top 50% del universo)"
+                    },
+                    "potential_0_40": {
+                        "base_width":    "0-15 pts (Wyckoff Cause: días en rango)",
+                        "rr_ratio_tp2":  "0-15 pts (R:R ≥ 4 = máximo)",
+                        "spring_depth":  "0-10 pts (shake-out más profundo = más absorción)"
+                    }
+                },
+                "risk_management": {
+                    "stop_loss": "Mínimo Spring − 0.5 × ATR(14)",
+                    "tp1":       "Resistencia local 60 días previos al Spring (50% posición)",
+                    "tp2":       "Siguiente HVN superior o R:R mínimo 1:3.5 (50% restante)",
+                    "breakeven": "SL → entrada al activarse TP1"
                 }
             }
         }
-        
-        print(f"Dashboard Minervini estructura creada")
-        print(f"Summary: {dashboard_data['summary']}")
-        
-        # Procesar datos para el ranking
-        if not all_df.empty and 'Minervini_Score' in all_df.columns:
-            print("Procesando el ranking para el dashboard...")
 
-            # Ordenar por los criterios principales y seleccionar el top 15
-            top_stocks = all_df.sort_values(
-                by=['Passes_All_Filters', 'Minervini_Score', 'RS_Rating'],
-                ascending=[False, False, False]
-            ).head(15)
-            print(f"✓ Top 15 por score identificado: {len(top_stocks)} acciones.")
-            
+        # ── Top Picks ────────────────────────────────────────────────────────
+        source_df = springs_df if not springs_df.empty else all_df
+        if not source_df.empty and 'Wyckoff_Score' in source_df.columns:
+            source_df = source_df.copy()
+            if 'Entry_Status' in source_df.columns:
+                source_df['_priority'] = source_df['Entry_Status'].apply(
+                    lambda x: 0 if 'Test Activo'     in str(x) else
+                              1 if 'Test Completado' in str(x) else 2
+                )
+                top_stocks = source_df.sort_values(
+                    ['_priority', 'Wyckoff_Score'], ascending=[True, False]
+                ).head(10)
+            else:
+                top_stocks = source_df.nlargest(10, 'Wyckoff_Score')
+
             for i, (_, row) in enumerate(top_stocks.iterrows()):
-                stage = row.get('Stage_Analysis', 'Unknown')
-                rs_rating = row.get('RS_Rating', 0)
-                score = row.get('Minervini_Score', 0)
-                
-                # Calcular métricas adicionales
-                dist_high = row.get('Distance_To_52w_High', 0)
-                dist_low = row.get('Distance_From_52w_Low', 0)
-                
-                # Usar .get con valores por defecto para limpiar el código y evitar errores
+                entry_status = str(row.get('Entry_Status', 'Sin Señal'))
+                rs    = safe_float(row.get('RS_Rating', 0))
+                score = safe_float(row.get('Wyckoff_Score', 0))
+                prob  = safe_float(row.get('Probability_Score', 0))
+                pot   = safe_float(row.get('Potential_Score', 0))
+                price = safe_float(row.get('Current_Price', 0))
+
                 pick = {
-                    "rank": i + 1,
-                    "symbol": str(row['Symbol']),
-                    "company": str(row.get('Company_Name', 'N/A')[:30]),
-                    "sector": str(row.get('Sector', 'N/A')),
-                    "price": float(row.get('Current_Price', 0.0)),
-                    "minervini_score": float(row.get('Minervini_Score', 0.0)),
-                    "stage_analysis": {
-                        "stage": str(stage),
-                        "icon": get_stage_icon(stage),
-                        "passes_all_filters": bool(row.get('Passes_All_Filters', False))
+                    "rank":    i + 1,
+                    "symbol":  str(row['Symbol']),
+                    "company": str(row.get('Company_Name', 'N/A'))[:30],
+                    "sector":  str(row.get('Sector', 'N/A')),
+                    "industry":str(row.get('Industry', 'N/A')),
+                    "price":   price,
+
+                    # Scores
+                    "wyckoff_score":     score,
+                    "probability_score": prob,
+                    "potential_score":   pot,
+
+                    # Estado de entrada
+                    "entry_status": {
+                        "status": entry_status,
+                        "icon":   get_entry_status_icon(entry_status)
                     },
+
+                    # Contexto de mercado y sector
+                    "market_context": {
+                        "market_healthy":      safe_bool(row.get('Market_Healthy', True)),
+                        "market_health_score": safe_float(row.get('Market_Health_Score', 0)),
+                        "industry_rank":       safe_float(row.get('Industry_Rank', 50)),
+                    },
+
+                    # RS
                     "relative_strength": {
-                        "rs_rating": float(row.get('RS_Rating', 0.0)),
-                        "strength_label": get_rs_strength_label(float(row.get('RS_Rating', 0.0)))
+                        "rs_rating": rs,
+                        "label":     get_rs_strength_label(rs)
                     },
-                    "position_52w": {
-                        "distance_to_high": float(row.get('Distance_To_52w_High', 0.0)),
-                        "distance_from_low": float(row.get('Distance_From_52w_Low', 0.0)),
-                        "high_52w": float(row.get('High_52w', 0.0)),
-                        "low_52w": float(row.get('Low_52w', 0.0))
+
+                    # Niveles Wyckoff
+                    "wyckoff_levels": {
+                        "s1_level":           safe_float(row.get('S1_Level')),
+                        "poc_level":          safe_float(row.get('POC_Level')),
+                        "hvn_count":          int(safe_float(row.get('HVN_Count', 0))),
+                        "confluence_valid":   safe_bool(row.get('Confluence_Valid', False)),
+                        "confluence_score":   safe_float(row.get('Confluence_Score', 0)),
+                        "nearest_confluence": safe_float(row.get('Nearest_Confluence', 0)),
                     },
-                    "technical_indicators": {
-                        "vcp_detected": bool(row.get('VCP_Detected', False)),
-                        "institutional_accumulation": bool(row.get('Institutional_Accumulation', False)),
-                        "institutional_evidence": bool(row.get('Institutional_Evidence', False)),
-                        "institutional_score": int(row.get('Institutional_Score', 0)),
-                        "volume_50d_millions": round(row.get('Volume_50d_Avg', 0) / 1_000_000, 1)
+
+                    # Spring (incluye estado de validación)
+                    "spring": {
+                        "detected":        safe_bool(row.get('Spring_Detected', False)),
+                        "date":            str(row.get('Spring_Date', '')),
+                        "low":             safe_float(row.get('Spring_Low', 0)),
+                        "volume_ratio":    safe_float(row.get('Spring_Volume_Ratio', 0)),
+                        "close_position":  safe_float(row.get('Spring_Close_Position', 0)),
+                        "depth_pct":       safe_float(row.get('Spring_Depth_Pct', 0)),
+                        "failed":          safe_bool(row.get('Spring_Failed', False)),
+                        "fail_date":       str(row.get('Spring_Fail_Date', '')),
+                        "stale":           safe_bool(row.get('Spring_Stale', False)),
+                        "is_actionable":   safe_bool(row.get('Is_Actionable', False)),
                     },
-                    "fundamental_metrics": {
-                        "earnings_acceleration": bool(row.get('Earnings_Acceleration', False)),
-                        "roe_strong": bool(row.get('ROE_Strong', False)),
-                        "passes_technical": bool(row.get('Passes_Technical', False)),
-                        "passes_fundamental": bool(row.get('Passes_Fundamental', False))
+
+                    # Calidad de la base
+                    "base_quality": {
+                        "obv_trend":       safe_float(row.get('OBV_Trend_Base', 0)),
+                        "base_width_days": int(safe_float(row.get('Base_Width_Days', 0))),
+                        "obv_positive":    safe_float(row.get('OBV_Trend_Base', 0)) > 0,
                     },
-                    "entry_point": {
-                        "signal": str(row.get('Entry_Signal', 'N/A')),
-                        "signal_text": str(row.get('Entry_Signal_Text', row.get('Entry_Signal', 'N/A'))),
-                        "css_class": str(row.get('Entry_Signal_Class', 'consolidando')),
-                        "is_extended": bool(row.get('Is_Extended', False)) # Asegura que sea booleano
+
+                    # Test
+                    "test": {
+                        "detected":      safe_bool(row.get('Test_Detected', False)),
+                        "date":          str(row.get('Test_Date', '')),
+                        "volume_ratio":  safe_float(row.get('Test_Volume_Ratio', 0)),
+                        "timing_days":   int(safe_float(row.get('Test_Timing_Days', 0)))
+                                         if row.get('Test_Timing_Days') not in ('', None) else None,
+                        "timing_score":  safe_float(row.get('Test_Timing_Score', 0)),
                     },
-                    "ma_levels": {
-                        "ma_50": float(row.get('MA_50')) if pd.notna(row.get('MA_50')) else 0.0,
-                        "ma_150": float(row.get('MA_150')) if pd.notna(row.get('MA_150')) else 0.0,
-                        "ma_200": float(row.get('MA_200')) if pd.notna(row.get('MA_200')) else 0.0
+
+                    # Gestión de riesgo (SL incluye margen de 0.5×ATR anti-volatilidad)
+                    "risk_management": {
+                        "entry_price":   safe_float(row.get('Entry_Price', 0)),
+                        "sl":            safe_float(row.get('SL', 0)),
+                        "sl_explanation":"Spring Low − 0.5×ATR(14) (margen anti-volatilidad)",
+                        "tp1":           safe_float(row.get('TP1', 0)),
+                        "tp2":           safe_float(row.get('TP2', 0)),
+                        "risk_pct":      safe_float(row.get('Risk_Pct', 0)),
+                        "rr_tp1":        safe_float(row.get('RR_TP1', 0)),
+                        "rr_tp2":        safe_float(row.get('RR_TP2', 0)),
+                        "atr":           safe_float(row.get('ATR', 0)),
+                        # Distancia precio_actual → SL (cuánto riesgo si se entra al precio actual)
+                        "current_to_sl_pct": round(
+                            (price - safe_float(row.get('SL', 0))) / price * 100, 2
+                        ) if price > 0 and safe_float(row.get('SL', 0)) > 0 else 0,
                     }
                 }
                 dashboard_data["top_picks"].append(pick)
-            
-            print(f"✓ {len(dashboard_data['top_picks'])} acciones añadidas a top_picks")
-        
-        # Análisis del mercado por Stage
-        if not all_df.empty and 'Stage_Analysis' in all_df.columns:
-            stage_distribution = all_df['Stage_Analysis'].value_counts().to_dict()
-            
-            # Calcular scores promedio por stage
-            stage_avg_scores = {}
-            for stage in stage_distribution.keys():
-                stage_stocks = all_df[all_df['Stage_Analysis'] == stage]
-                if not stage_stocks.empty and 'Minervini_Score' in stage_stocks.columns:
-                    stage_avg_scores[stage] = round(stage_stocks['Minervini_Score'].mean(), 1)
-                else:
-                    stage_avg_scores[stage] = 0
-            
-            pct_rs_strong = 0
-            if 'RS_Rating' in all_df.columns:
-                valid_rs_stocks = all_df.dropna(subset=['RS_Rating'])
-                if not valid_rs_stocks.empty:
-                    strong_rs = (valid_rs_stocks['RS_Rating'] >= 70).sum()
-                    pct_rs_strong = round((strong_rs / len(valid_rs_stocks)) * 100, 1)
 
-            # NUEVO: Calcular % de acciones en Stage 2
-            total_stocks_for_stage_pct = len(all_df.dropna(subset=['Stage_Analysis']))
-            total_stage2 = stage_distribution.get("Stage 2 (Uptrend)", 0) + stage_distribution.get("Stage 2 (Developing)", 0)
-            pct_in_stage2 = round((total_stage2 / total_stocks_for_stage_pct) * 100, 1) if total_stocks_for_stage_pct > 0 else 0
+            print(f"✓ {len(dashboard_data['top_picks'])} picks añadidos al dashboard")
+
+        # ── Análisis de mercado ───────────────────────────────────────────────
+        if not springs_df.empty:
+            entry_dist = {}
+            if 'Entry_Status' in springs_df.columns:
+                entry_dist = springs_df['Entry_Status'].value_counts().to_dict()
+
+            sector_springs = {}
+            if 'Sector' in springs_df.columns:
+                sector_springs = springs_df['Sector'].value_counts().head(5).to_dict()
+
+            score_dist = {}
+            if 'Wyckoff_Score' in springs_df.columns:
+                score_dist = {
+                    "score_80_plus": int((springs_df['Wyckoff_Score'] >= 80).sum()),
+                    "score_60_79":   int(((springs_df['Wyckoff_Score'] >= 60) & (springs_df['Wyckoff_Score'] < 80)).sum()),
+                    "score_40_59":   int(((springs_df['Wyckoff_Score'] >= 40) & (springs_df['Wyckoff_Score'] < 60)).sum()),
+                    "score_below_40":int((springs_df['Wyckoff_Score'] < 40).sum()),
+                }
+
+            obv_positive = 0
+            base_wide    = 0
+            if 'OBV_Trend_Base' in springs_df.columns:
+                obv_positive = int((springs_df['OBV_Trend_Base'] > 0).sum())
+            if 'Base_Width_Days' in springs_df.columns:
+                base_wide = int((springs_df['Base_Width_Days'] >= 50).sum())
+
+            confluence_rate = 0.0
+            if 'Confluence_Valid' in all_df.columns and len(all_df) > 0:
+                confluence_rate = round(all_df['Confluence_Valid'].sum() / len(all_df) * 100, 1)
 
             dashboard_data["market_analysis"] = {
-                "stage_distribution": stage_distribution,
-                "stage_avg_scores": stage_avg_scores,
-                "total_stage2": total_stage2,
-                "market_health": "Strong" if len(stage2_df) > 0 else "Weak",
-                # Datos de amplitud
-                "pct_rs_strong": pct_rs_strong,
-                "pct_in_stage2": pct_in_stage2
+                "entry_distribution":    entry_dist,
+                "sector_springs":        sector_springs,
+                "score_distribution":    score_dist,
+                "avg_prob_score":        avg_prob,
+                "avg_pot_score":         avg_pot,
+                "obv_positive_count":    obv_positive,
+                "base_wide_count":       base_wide,
+                "confluence_rate_pct":   confluence_rate,
+                "rs_above_70_universe":  int((all_df['RS_Rating'] >= 70).sum())
+                                         if 'RS_Rating' in all_df.columns else 0,
             }
-            
-            print(f"✓ Análisis de mercado por stages calculado")
-            print(f"✓ Indicadores de amplitud: RS>70: {pct_rs_strong}%, en Stage 2: {pct_in_stage2}%")
-        
-        # Análisis de eliminación Minervini
-        dashboard_data["elimination_analysis"] = {
-            "total_eliminated": len(all_df) - len(stage2_df),
-            "elimination_rate": round(((len(all_df) - len(stage2_df)) / len(all_df) * 100), 1) if len(all_df) > 0 else 0,
-            "top_reasons": {}
-        }
-        
-        if len(all_df) > len(stage2_df):
-            total_stocks = len(all_df)
-            
-            # Forma optimizada y "pandastic" de contar las razones de eliminación
-            eliminated_stocks = all_df[all_df['Passes_All_Filters'] == False]
-            reasons_series = eliminated_stocks['Filter_Reasons'].str.split(';').explode().str.strip()
-            # Limpiar valores no deseados y contar
-            valid_reasons = reasons_series[reasons_series.ne('') & ~reasons_series.isin(['✅ PASA TODOS LOS FILTROS MINERVINI', 'nan'])]
-            filter_reasons_count = valid_reasons.value_counts().to_dict()
-            
-            # Top 10 razones para el dashboard
-            for reason, count in sorted(filter_reasons_count.items(), key=lambda x: x[1], reverse=True)[:10]:
-                percentage = round((count / total_stocks) * 100, 1)
-                dashboard_data["elimination_analysis"]["top_reasons"][reason] = {
-                    "count": count,
-                    "percentage": percentage
-                }
-            
-            print(f"✓ Análisis de eliminación Minervini: {len(filter_reasons_count)} razones diferentes")
-        
-        # Estadísticas Minervini específicas
-        if not all_df.empty:
-            # Estadísticas de RS Rating
-            rs_stats = {}
-            if 'RS_Rating' in all_df.columns:
-                rs_data = all_df['RS_Rating'].dropna()
-                if not rs_data.empty:
-                    rs_stats = {
-                        "avg_rs_rating": round(rs_data.mean(), 1),
-                        "rs_above_70": len(rs_data[rs_data >= 70]),
-                        "rs_above_80": len(rs_data[rs_data >= 80]),
-                        "rs_above_90": len(rs_data[rs_data >= 90])
-                    }
-            
-            # Estadísticas de posición 52w
-            position_stats = {}
-            if 'Distance_To_52w_High' in all_df.columns:
-                high_data = all_df['Distance_To_52w_High'].dropna()
-                low_data = all_df['Distance_From_52w_Low'].dropna()
-                if not high_data.empty and not low_data.empty:
-                    position_stats = {
-                        "avg_distance_to_high": round(high_data.mean(), 1),
-                        "avg_distance_from_low": round(low_data.mean(), 1),
-                        "near_highs_25pct": len(high_data[high_data <= 25]),
-                        "above_low_30pct": len(low_data[low_data >= 30])
-                    }
-            
-            dashboard_data["minervini_statistics"] = {
-                "rs_rating_stats": rs_stats,
-                "position_52w_stats": position_stats,
-                "pattern_detection": {
-                    "vcp_detected": all_df['VCP_Detected'].sum() if 'VCP_Detected' in all_df.columns else 0,
-                    "institutional_accumulation": all_df['Institutional_Accumulation'].sum() if 'Institutional_Accumulation' in all_df.columns else 0,
-                    "institutional_evidence": all_df['Institutional_Evidence'].sum() if 'Institutional_Evidence' in all_df.columns else 0,
-                    "avg_institutional_score": round(all_df['Institutional_Score'].mean(), 1) if 'Institutional_Score' in all_df.columns else 0
-                },
-                "score_distribution": {
-                    "score_80_plus": len(all_df[all_df['Minervini_Score'] >= 80]) if 'Minervini_Score' in all_df.columns else 0,
-                    "score_60_79": len(all_df[(all_df['Minervini_Score'] >= 60) & (all_df['Minervini_Score'] < 80)]) if 'Minervini_Score' in all_df.columns else 0,
-                    "score_40_59": len(all_df[(all_df['Minervini_Score'] >= 40) & (all_df['Minervini_Score'] < 60)]) if 'Minervini_Score' in all_df.columns else 0,
-                    "score_below_40": len(all_df[all_df['Minervini_Score'] < 40]) if 'Minervini_Score' in all_df.columns else 0
-                }
-            }
-            
-            print("✓ Estadísticas Minervini específicas calculadas")
-        
-        # Crear directorio docs
-        print("Creando directorio docs...")
+            print("✓ Análisis de mercado calculado")
+
+        # ── Guardar JSON ─────────────────────────────────────────────────────
         os.makedirs('docs', exist_ok=True)
-        print("✓ Directorio docs creado/verificado")
-        
-        # Guardar JSON con conversión de tipos numpy
         json_path = 'docs/data.json'
-        print(f"Guardando JSON Minervini en: {json_path}")
-        
-        try:
-            # Convertir todos los tipos numpy antes de serializar
-            dashboard_data_clean = convert_numpy_types(dashboard_data)
-            
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(dashboard_data_clean, f, indent=2, ensure_ascii=False)
-            
-            print(f"✅ Dashboard Minervini creado: {json_path}")
-            
-            # Verificar archivo
-            if os.path.exists(json_path):
-                size = os.path.getsize(json_path)
-                print(f"✅ Archivo verificado - Tamaño: {size} bytes")
-                
-                # Mostrar resumen del contenido Minervini
-                print(f"📊 Resumen del dashboard Minervini:")
-                print(f"   - Total analizadas: {dashboard_data['summary']['total_analyzed']}")
-                print(f"   - Stage 2 stocks: {dashboard_data['summary']['stage2_stocks']}")
-                print(f"   - Tasa de éxito: {dashboard_data['summary']['success_rate']}%")
-                print(f"   - Score promedio: {dashboard_data['summary']['avg_minervini_score']}")
-                print(f"   - Top picks: {len(dashboard_data['top_picks'])}")
-                print(f"   - Eliminadas: {dashboard_data['elimination_analysis']['total_eliminated']}")
-                print(f"   - Razones eliminación: {len(dashboard_data['elimination_analysis']['top_reasons'])}")
-                
-                # Mostrar distribución por stages
-                if dashboard_data.get('market_analysis', {}).get('stage_distribution'):
-                    print(f"   - Distribución por Stage:")
-                    for stage, count in dashboard_data['market_analysis']['stage_distribution'].items():
-                        print(f"     * {stage}: {count}")
-                
-            else:
-                print("❌ El archivo no se pudo verificar")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Error guardando JSON Minervini: {e}")
-            return False
-        
-        # Crear archivo de última actualización
-        try:
-            with open('docs/last_update.txt', 'w') as f:
-                f.write(datetime.now().isoformat())
-            print("✓ Archivo last_update.txt creado")
-        except Exception as e:
-            print(f"⚠️ Error creando last_update.txt: {e}")
-        
-        print(f"🎉 Dashboard Minervini SEPA completamente generado!")
+
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(convert_numpy_types(dashboard_data), f, indent=2, ensure_ascii=False)
+
+        size = os.path.getsize(json_path)
+        print(f"✅ Dashboard creado: {json_path} ({size} bytes)")
+        print(f"📊 Resumen: {spring_count} springs | {test_active_count} entradas activas | "
+              f"Mercado {'alcista ✅' if market_healthy else 'bajista ⚠️'}")
+
+        with open('docs/last_update.txt', 'w') as f:
+            f.write(datetime.now().isoformat())
+        print("✓ last_update.txt actualizado")
+
         return True
-        
+
     except Exception as e:
         print(f"❌ ERROR GENERAL: {e}")
         import traceback
         traceback.print_exc()
         return False
 
+
 if __name__ == "__main__":
-    success = create_minervini_dashboard_data()
+    success = create_wyckoff_dashboard_data()
     if success:
-        print("\n✅ SUCCESS: Dashboard Minervini creado correctamente")
+        print("\n✅ SUCCESS: Dashboard Wyckoff Spring creado")
         print("📱 Abre docs/index.html en tu navegador")
-        print("🎯 Sistema basado en metodología SEPA de Mark Minervini")
     else:
         print("\n❌ FAILED: Revisar errores arriba")
