@@ -3,852 +3,544 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minervini SEPA - Top Stage 2 Stocks</title>
+    <title>Wyckoff Spring Screener - Top Swing Setups</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+
+        :root {
+            --bg: #f4f7f9;
+            --card: #ffffff;
+            --text: #1a202c;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --green: #10b981;
+            --red: #ef4444;
+            --orange: #f59e0b;
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+            --shadow: 0 4px 12px rgba(0,0,0,0.05);
         }
-        
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: #f4f7f9;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
             min-height: 100vh;
             padding: 10px;
-            color: #333;
+            line-height: 1.5;
         }
-        
+
         .container {
-            max-width: 500px;
+            max-width: 560px;
             margin: 10px auto;
-            background: #f4f7f9;
-            border-radius: 20px;
-            overflow: hidden;
         }
-        
+
         .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background-color: #ffffff;
+            background: var(--card);
             border-radius: 16px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            margin-bottom: 15px;
+            padding: 18px 20px;
+            box-shadow: var(--shadow);
+            margin-bottom: 14px;
         }
-        
+
         .header h1 {
-            font-size: 1.4em;
+            font-size: 1.25em;
             font-weight: 700;
-            color: #1a202c;
-        }
-        
-        .header .subtitle {
-            color: #4a5568;
-            font-size: 0.9em;
-            font-weight: 500;
-        }
-        
-        .summary {
-            padding: 0;
-            margin-bottom: 15px;
-        }
-        
-        .summary-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            text-align: center;
-        }
-        
-        .summary-item {
-            background: #ffffff;
-            padding: 12px 5px;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        }
-        
-        .summary-number {
-            font-size: 1.4em;
-            font-weight: 700;
-            color: #1a202c;
-        }
-        
-        .summary-number.stage2 {
-            color: #16a34a;
-        }
-        
-        .summary-number.score {
-            color: #2563eb;
-        }
-        
-        .summary-number.success {
-            color: #d97706;
-        }
-        
-        .summary-label {
-            font-size: 0.75em;
-            color: #4a5568;
-            margin-top: 4px;
-            font-weight: 500;
-        }
-        
-        .breadth-value.strong {
-            color: #16a34a;
-        }
-        
-        .breadth-value.neutral {
-            color: #d97706;
-        }
-        
-        .breadth-value.weak {
-            color: #b91c1c;
-        }
-
-        .market-breadth {
-            margin-bottom: 15px;
-        }
-
-        .breadth-grid {
-            display: grid; /* Se ajustará a 2 columnas */
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
-        }
-
-        .breadth-item {
-            background: #ffffff;
-            padding: 12px 5px;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            text-align: center;
-        }
-
-        .breadth-value {
-            font-size: 1.3em;
-            font-weight: 700;
-            color: #1a202c;
             margin-bottom: 4px;
         }
 
-        .top-picks {
-            padding: 0;
-        }
-        
-        .section-title {
-            font-size: 1.1em;
-            font-weight: 600;
-            margin-bottom: 15px;
-            color: #1a202c;
-            display: flex;
-            align-items: center;
-            padding: 0 5px;
+        .header .subtitle {
+            font-size: 0.85em;
+            color: var(--muted);
         }
 
-        .sort-controls {
-            margin-left: auto;
-            display: flex;
-            gap: 8px;
+        .market-banner {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            box-shadow: var(--shadow);
+            border-left: 4px solid var(--green);
         }
 
-        .sort-btn {
-            background-color: #f1f5f9;
-            border: 1px solid #e2e8f0;
-            padding: 5px 10px;
-            border-radius: 8px;
+        .market-banner.bearish { border-left-color: var(--red); }
+
+        .market-banner .label {
             font-size: 0.75em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
+            text-transform: uppercase;
+            color: var(--muted);
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
         }
 
-        .sort-btn.active, .sort-btn:hover {
-            background-color: #3b82f6;
-            color: white;
-            border-color: #2563eb;
+        .market-banner .status {
+            font-size: 1.05em;
+            font-weight: 700;
+            margin-bottom: 6px;
         }
-        
-        .stock-card {
-            background: white;
-            border-radius: 15px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            border: 1px solid #e2e8f0;
-            transition: all 0.2s ease-in-out;
-            position: relative;
+
+        .market-banner .desc {
+            font-size: 0.82em;
+            color: var(--muted);
         }
-        
-        .stock-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
-            border-color: #3b82f6;
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 14px;
         }
-        
-        .stock-header {
+
+        .summary-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: var(--shadow);
+            text-align: center;
+        }
+
+        .summary-card .value {
+            font-size: 1.6em;
+            font-weight: 700;
+            color: var(--blue);
+            line-height: 1.1;
+        }
+
+        .summary-card .label {
+            font-size: 0.72em;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-top: 4px;
+        }
+
+        .summary-card.warn .value { color: var(--orange); }
+        .summary-card.danger .value { color: var(--red); }
+
+        .stale-warning {
+            background: #fef3c7;
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 14px;
+            font-size: 0.82em;
+            color: #78350f;
+            border-left: 3px solid var(--orange);
+        }
+
+        .section-title {
+            font-size: 1.05em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            padding-left: 4px;
+        }
+
+        .pick-card {
+            background: var(--card);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            box-shadow: var(--shadow);
+            border-left: 4px solid var(--border);
+        }
+
+        .pick-card.test-active   { border-left-color: var(--green); }
+        .pick-card.test-done     { border-left-color: var(--blue); }
+        .pick-card.spring-only   { border-left-color: var(--purple); }
+
+        .pick-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 12px;
-            padding-left: 40px; /* Espacio para el rank */
-        }
-        
-        .stock-info {
-            /* El padding-left se eliminó, ahora se gestiona en .stock-header */
+            margin-bottom: 8px;
         }
 
-        .stock-info h3 {
-            font-size: 1.2em;
+        .pick-rank {
+            display: inline-block;
+            background: var(--blue);
+            color: white;
+            font-size: 0.7em;
+            padding: 2px 8px;
+            border-radius: 8px;
+            margin-right: 8px;
             font-weight: 700;
-            color: #1a202c;
+            vertical-align: middle;
         }
-        
-        .stock-info .company {
-            font-size: 0.8em;
-            color: #4a5568;
-            font-weight: 500;
+
+        .pick-symbol {
+            font-size: 1.15em;
+            font-weight: 700;
+            display: inline-block;
         }
-        
-        .stock-info .sector {
+
+        .pick-company {
             font-size: 0.75em;
-            color: #718096;
+            color: var(--muted);
+            margin-top: 2px;
         }
-        
-        .stock-price {
-            text-align: right;
-            flex-shrink: 0;
-            margin-left: 10px;
-        }
-        
-        .price {
-            font-size: 1.2em;
+
+        .pick-price {
+            font-size: 1.05em;
             font-weight: 700;
-            color: #1a202c;
+            text-align: right;
         }
-        
-        .minervini-score {
-            font-size: 0.9em;
-            color: #16a34a;
+
+        .pick-sector {
+            font-size: 0.7em;
+            color: var(--muted);
+            text-align: right;
+            margin-top: 2px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.74em;
             font-weight: 600;
+            margin-top: 8px;
         }
-        
-        .stats-grid {
+
+        .status-badge.test-active { background: #d1fae5; color: #065f46; }
+        .status-badge.test-done   { background: #dbeafe; color: #1e40af; }
+        .status-badge.spring-only { background: #ede9fe; color: #5b21b6; }
+
+        .score-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+            margin-top: 12px;
+            padding: 10px 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .score-cell {
+            text-align: center;
+        }
+
+        .score-cell .v {
+            font-size: 1.1em;
+            font-weight: 700;
+        }
+
+        .score-cell .v.total { color: var(--blue); font-size: 1.3em; }
+        .score-cell .v.prob  { color: var(--green); }
+        .score-cell .v.pot   { color: var(--purple); }
+
+        .score-cell .l {
+            font-size: 0.65em;
+            color: var(--muted);
+            text-transform: uppercase;
+        }
+
+        .levels-grid, .risk-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 12px;
-        }
-        
-        .stat-item {
-            background-color: #f8fafc;
-            padding: 10px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        
-        .stage-badge {
-            font-size: 0.85em;
-            font-weight: 600;
-            color: #1a202c;
-            margin-bottom: 3px;
-        }
-        
-        .stat-label {
-            font-size: 0.7em;
-            color: #4a5568;
-            font-weight: 500;
-        }
-        
-        .technical-indicators {
-            display: flex;
-            flex-wrap: wrap;
             gap: 8px;
-            margin-bottom: 12px;
-        }
-        
-        .indicator-badge {
-            background: #eef2ff;
-            color: #4338ca;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.75em;
-            font-weight: 600;
-        }
-
-        .indicator-badge.vcp-badge {
-            background: #dcfce7; /* Verde claro */
-            color: #166534; /* Verde oscuro */
-            border: 1px solid #86efac;
-            font-weight: 700;
-        }
-
-        .indicator-badge.accumulation-badge {
-            background-color: #e0f2fe; /* Azul claro */
-            color: #0c4a6e; /* Azul oscuro */
-            border-color: #7dd3fc;
-        }
-        
-        .entry-signal {
             margin-top: 12px;
-            padding: 8px 12px;
-            border-radius: 10px;
-            text-align: center;
-            font-weight: 600;
-            font-size: 0.85em;
-            border: 1px solid transparent;
+            font-size: 0.82em;
         }
 
-        .entry-signal.pivot-point {
-            background-color: #dcfce7; /* Verde claro */
-            color: #166534; /* Verde oscuro */
-            border-color: #86efac;
+        .kv {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
         }
 
-        .entry-signal.vcp-setup {
-            background-color: #fef9c3; /* Amarillo claro */
-            color: #854d0e; /* Amarillo oscuro */
-            border-color: #fde047;
+        .kv .k {
+            color: var(--muted);
+        }
+
+        .kv .v {
             font-weight: 600;
         }
 
-        .entry-signal.ma-bounce-50,
-        .entry-signal.ma-bounce-21 {
-            background-color: #e0f2fe; /* Azul claro */
-            color: #0c4a6e; /* Azul oscuro */
-            border-color: #7dd3fc;
-        }
+        .kv .v.sl  { color: var(--red); }
+        .kv .v.tp  { color: var(--green); }
+        .kv .v.atr { color: var(--purple); }
 
-        .entry-signal.consolidando {
-            background-color: #fefce8; /* Amarillo claro */
-            color: #854d0e; /* Amarillo oscuro */
-        }
-
-        .entry-signal.extendido {
-            background-color: #fef2f2; /* Rojo claro */
-            color: #b91c1c; /* Rojo oscuro */
-        }
-
-        .rank {
-            position: absolute;
-            top: 15px; /* Alineado con el contenido */
-            left: 15px;  /* Dentro de la tarjeta */
-            background: #2563eb;
-            color: white;
-            padding: 3px 8px;
-            border-radius: 5px;
-            font-weight: 700;
-            font-size: 0.75em;
-            box-shadow: 2px 2px 8px rgba(37, 99, 235, 0.4);
-        }
-        
-        .perfect-candidate-badge {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            background: linear-gradient(45deg, #16a34a, #22c55e);
-            color: white;
-            padding: 4px 10px;
-            border-radius: 20px;
+        .risk-explanation {
             font-size: 0.7em;
-            font-weight: 700;
+            color: var(--muted);
+            margin-top: 6px;
+            font-style: italic;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.78em;
+            padding: 3px 0;
+        }
+
+        .detail-row .k { color: var(--muted); }
+        .detail-row .v { font-weight: 600; }
+        .detail-row .v.green { color: var(--green); }
+        .detail-row .v.red   { color: var(--red); }
+
+        .section-subtitle {
+            font-size: 0.72em;
+            color: var(--muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+            margin-top: 12px;
+            margin-bottom: 4px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .footer {
+            text-align: center;
+            font-size: 0.75em;
+            color: var(--muted);
+            margin: 20px 0 10px;
+            padding: 14px;
+            background: var(--card);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+        }
+
+        .footer .strategy {
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 4px;
         }
 
         .loading {
             text-align: center;
-            padding: 40px;
-            color: #666;
+            padding: 40px 20px;
+            color: var(--muted);
         }
 
-        .error {
-            background: #ffebee;
-            color: #c62828;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 20px;
-            text-align: center;
-        }
-        
-        .last-update {
-            text-align: center;
-            padding: 20px;
-            font-size: 0.8em;
-            color: #718096;
-            font-weight: 500;
-            line-height: 1.5;
-        }
-        
-        .refresh-btn {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #ffffff;
-            color: white;
-            background: #2563eb;
-            border: none;
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            font-size: 1.2em;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .refresh-btn:hover {
-            transform: scale(1.1);
-        }
-        
-        .no-results {
-            text-align: center;
-            padding: 30px 20px;
-            background: #ffffff;
-            border-radius: 15px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            margin: 10px 0;
-        }
-        
-        .no-results-icon {
-            font-size: 3em;
-            margin-bottom: 15px;
-            opacity: 0.7;
-        }
-        
-        .no-results-title {
-            font-size: 1.3em;
-            font-weight: bold;
-            color: #1a202c;
-            margin-bottom: 8px;
-        }
-        
-        .no-results-subtitle {
-            font-size: 1em;
-            color: #6c757d;
-            margin-bottom: 25px;
-        }
-        
-        .minervini-criteria {
-            background: #f8fafc;
+        .no-data {
+            background: var(--card);
             border-radius: 12px;
-            padding: 15px;
-            margin-top: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        .criteria-title {
-            font-weight: bold;
-            color: #495057;
-            margin-bottom: 15px;
+            padding: 30px 20px;
             text-align: center;
-            font-size: 1.1em;
-        }
-        
-        .criteria-section {
-            margin-bottom: 15px;
-        }
-        
-        .criteria-subtitle {
-            font-weight: bold;
-            color: #16a34a;
-            margin-bottom: 8px;
-            font-size: 0.85em;
-        }
-        
-        .criteria-list {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 4px;
-        }
-        
-        .criteria-item {
-            background: #ffffff;
-            padding: 6px 10px;
-            border-radius: 6px;
-            font-size: 0.8em;
-            border-left: 3px solid #16a34a;
-        }
-        
-        .market-health {
-            background: white;
-            border-radius: 15px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            box-shadow: var(--shadow);
+            margin-bottom: 14px;
         }
 
-        .chart-container {
-            display: flex;
-            gap: 5px;
-            height: 100px;
-            align-items: flex-end;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 10px;
-        }
+        .no-data .icon { font-size: 2.4em; margin-bottom: 10px; }
+        .no-data .title { font-weight: 700; font-size: 1.05em; margin-bottom: 6px; }
+        .no-data .desc { font-size: 0.82em; color: var(--muted); }
 
-        .chart-bar {
-            flex-grow: 1;
-            background-color: #ccc;
-            text-align: center;
-            position: relative;
-            border-radius: 4px 4px 0 0;
-        }
-
-        .bar-label {
-            position: absolute;
-            bottom: -20px;
-            width: 100%;
-            font-size: 0.7em;
-            color: #4a5568;
-            font-weight: 500;
-        }
-        
-        .bar-value {
-            font-size: 0.8em;
-            font-weight: 600;
-            color: white;
-        }
-
-        .elimination-analysis {
-            background: white;
-            border-radius: 15px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        }
-
-        .elimination-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .elimination-item {
-            font-size: 0.8em;
-        }
-
-        .elimination-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 4px;
-            color: #4a5568;
-            font-weight: 500;
-        }
-
-        .reason-text {
-            color: #1a202c;
-            font-weight: 600;
-        }
-
-        .progress-bar-container {
-            width: 100%;
-            background-color: #e2e8f0;
-            border-radius: 10px;
-            height: 8px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
-            height: 100%;
-            background-color: #ef4444; /* Rojo para descarte */
-            border-radius: 10px;
-            transition: width 0.5s ease-in-out;
-        }
-        @media (max-width: 480px) {
-            .container {
-                margin: 0;
-                padding: 5px;
-            }
-            
-            .summary-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
+        @media (max-width: 380px) {
+            .summary-grid { grid-template-columns: 1fr; }
+            .levels-grid, .risk-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div class="title-section">
-                <h1>📈 Minervini SEPA</h1>
-                <div class="subtitle">Top Stage 2 Stocks</div>
-            </div>
+            <h1>🌊 Wyckoff Spring Screener</h1>
+            <div class="subtitle">Swing Trading Macro · Diario · Top 10 setups</div>
         </div>
-        
-        <div id="content">
-            <div class="loading">
-                <div>🔄 Cargando datos Minervini...</div>
-            </div>
-        </div>
+
+        <div id="content" class="loading">Cargando datos...</div>
+
+        <div class="footer" id="footer-content"></div>
     </div>
-    
-    <button class="refresh-btn" onclick="loadData()" title="Actualizar datos">
-        🔄
-    </button>
 
     <script>
-        let allTopPicks = []; // Almacenar los datos originales para poder reordenar
-        let fullData = {}; // Almacenar el objeto de datos completo para reutilizarlo
+    async function loadDashboard() {
+        try {
+            const resp = await fetch('data.json?t=' + Date.now());
+            const data = await resp.json();
+            render(data);
+        } catch (err) {
+            document.getElementById('content').innerHTML =
+                `<div class="no-data"><div class="icon">❌</div>
+                <div class="title">Error cargando datos</div>
+                <div class="desc">${err.message}</div></div>`;
+        }
+    }
 
-        async function loadData() {
-            const contentEl = document.getElementById('content');
-            contentEl.innerHTML = `<div class="loading"><div>🔄 Cargando datos Minervini...</div></div>`;
+    function fmt(v, dec = 2) {
+        if (v === null || v === undefined || v === '' || isNaN(v)) return '—';
+        return Number(v).toFixed(dec);
+    }
 
-            try {
-                const response = await fetch(`data.json?v=${new Date().getTime()}`);
-                if (!response.ok) {
-                    throw new Error(`Error de red: ${response.statusText}`);
-                }
-                const data = await response.json();
-                allTopPicks = data.top_picks || []; // Guardar los datos originales
-                fullData = data; // Guardar el objeto de datos completo
+    function fmtPrice(v) {
+        if (!v) return '—';
+        return '$' + Number(v).toFixed(2);
+    }
 
-                renderDashboard(data);
-            } catch (error) {
-                console.error('Error al cargar data.json:', error);
-                contentEl.innerHTML = `<div class="error">❌ No se pudieron cargar los datos. Revisa la consola para más detalles.</div>`;
-            }
+    function fmtPct(v) {
+        if (v === null || v === undefined || isNaN(v)) return '—';
+        return Number(v).toFixed(2) + '%';
+    }
+
+    function getCardClass(status) {
+        if (status.includes('Test Activo')) return 'test-active';
+        if (status.includes('Test Completado')) return 'test-done';
+        if (status.includes('Spring Detectado')) return 'spring-only';
+        return '';
+    }
+
+    function getBadgeClass(status) {
+        if (status.includes('Test Activo')) return 'test-active';
+        if (status.includes('Test Completado')) return 'test-done';
+        if (status.includes('Spring Detectado')) return 'spring-only';
+        return '';
+    }
+
+    function render(data) {
+        const m = data.market_context || {};
+        const s = data.summary || {};
+        const picks = (data.top_picks || []).filter(p =>
+            p.spring && p.spring.is_actionable
+        );
+
+        const marketHtml = `
+            <div class="market-banner ${m.healthy ? '' : 'bearish'}">
+                <div class="label">Estado del mercado (S&P 500)</div>
+                <div class="status">${m.status_label || '—'}</div>
+                <div class="desc">${m.description || ''} · Score: ${fmt(m.health_score, 1)}/15</div>
+            </div>`;
+
+        const summaryHtml = `
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="value">${s.springs_detected || 0}</div>
+                    <div class="label">Springs Activos</div>
+                </div>
+                <div class="summary-card">
+                    <div class="value">${s.tests_active || 0}</div>
+                    <div class="label">En Zona Entrada</div>
+                </div>
+                <div class="summary-card warn">
+                    <div class="value">${s.springs_stale || 0}</div>
+                    <div class="label">Caducados</div>
+                </div>
+                <div class="summary-card danger">
+                    <div class="value">${s.springs_failed || 0}</div>
+                    <div class="label">Fallidos</div>
+                </div>
+            </div>`;
+
+        const discarded = (s.springs_failed || 0) + (s.springs_stale || 0);
+        const staleWarn = discarded > 0
+            ? `<div class="stale-warning">⚠️ ${discarded} Springs descartados por invalidación o caducidad (no aparecen en el top).</div>`
+            : '';
+
+        let picksHtml;
+        if (picks.length === 0) {
+            picksHtml = `<div class="no-data">
+                <div class="icon">📊</div>
+                <div class="title">Sin setups operables hoy</div>
+                <div class="desc">${s.total_analyzed || 0} acciones analizadas. Ningún Spring activo cumple los criterios. Vuelve mañana.</div>
+            </div>`;
+        } else {
+            picksHtml = '<div class="section-title">🔝 Top ' + picks.length + ' Setups</div>' +
+                picks.map(p => renderPick(p)).join('');
         }
 
-        function renderDashboard(data) {
-            const contentEl = document.getElementById('content');
+        document.getElementById('content').innerHTML = marketHtml + summaryHtml + staleWarn + picksHtml;
 
-            const summaryHtml = `
-                <div class="summary">
-                    <div class="summary-grid">
-                        <div class="summary-item">
-                            <div class="summary-number">${data.summary.total_analyzed}</div>
-                            <div class="summary-label">Analizadas</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-number stage2">${data.summary.stage2_stocks}</div>
-                            <div class="summary-label">Stage 2</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-number score">${data.summary.avg_minervini_score.toFixed(1)}</div>
-                            <div class="summary-label">Score Avg</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-number success">${data.summary.success_rate.toFixed(1)}%</div>
-                            <div class="summary-label">Éxito</div>
-                        </div>
+        const now = new Date(data.timestamp || Date.now());
+        document.getElementById('footer-content').innerHTML = `
+            <div class="strategy">${data.strategy || 'Wyckoff Spring + Volume Profile'}</div>
+            <div>Scoring: Probabilidad (0-60) + Potencial (0-40) = Total (0-100)</div>
+            <div>SL = Spring Low − 0.5×ATR(14) · Margen anti-volatilidad</div>
+            <div style="margin-top:8px;">Actualizado: ${now.toLocaleString('es-ES')}</div>
+        `;
+    }
+
+    function renderPick(p) {
+        const e = p.entry_status || {};
+        const r = p.relative_strength || {};
+        const w = p.wyckoff_levels || {};
+        const sp = p.spring || {};
+        const t = p.test || {};
+        const bq = p.base_quality || {};
+        const rm = p.risk_management || {};
+        const mc = p.market_context || {};
+
+        const cardCls = getCardClass(e.status || '');
+        const badgeCls = getBadgeClass(e.status || '');
+
+        return `
+            <div class="pick-card ${cardCls}">
+                <div class="pick-header">
+                    <div>
+                        <span class="pick-rank">#${p.rank}</span>
+                        <span class="pick-symbol">${p.symbol}</span>
+                        <div class="pick-company">${p.company || ''}</div>
+                    </div>
+                    <div>
+                        <div class="pick-price">${fmtPrice(p.price)}</div>
+                        <div class="pick-sector">${p.sector || ''}</div>
                     </div>
                 </div>
-            `;
 
-            function getBreadthClass(value, thresholds) {
-                if (value >= thresholds.strong) return 'strong';
-                if (value >= thresholds.neutral) return 'neutral';
-                return 'weak';
-            }
+                <div class="status-badge ${badgeCls}">${e.icon || ''} ${e.status || 'Sin Señal'}</div>
 
-            let marketBreadthHtml = '';
-            const marketAnalysis = data.market_analysis;
-            if (marketAnalysis && marketAnalysis.pct_rs_strong !== undefined) {
-                const rsClass = getBreadthClass(marketAnalysis.pct_rs_strong, { strong: 50, neutral: 30 });
-                const stage2Class = getBreadthClass(marketAnalysis.pct_in_stage2, { strong: 20, neutral: 10 });
-
-                marketBreadthHtml = `
-                    <div class="market-breadth">
-                        <div class="section-title">🌡️ Amplitud del Mercado</div>
-                        <div class="breadth-grid">
-                            <div class="breadth-item">
-                                <div class="breadth-value ${rsClass}">${marketAnalysis.pct_rs_strong.toFixed(0)}%</div>
-                                <div class="summary-label">RS > 70</div>
-                            </div>
-                            <div class="breadth-item">
-                                <div class="breadth-value ${stage2Class}">${marketAnalysis.pct_in_stage2.toFixed(0)}%</div>
-                                <div class="summary-label">in Stage 2</div>
-                            </div>
-                        </div>
+                <div class="score-row">
+                    <div class="score-cell">
+                        <div class="v total">${fmt(p.wyckoff_score, 1)}</div>
+                        <div class="l">Total /100</div>
                     </div>
-                `;
-            }
-
-            let topPicksHtml = `
-                <div class="top-picks">
-                    <div class="section-title">
-                        <span>${data.top_picks.length > 0 ? '🏆 Top Picks Minervini SEPA' : 'Análisis del Mercado'}</span>
+                    <div class="score-cell">
+                        <div class="v prob">${fmt(p.probability_score, 1)}</div>
+                        <div class="l">Probabilidad /60</div>
                     </div>
-                    <div id="top-picks-list">
-                        <!-- El contenido de las acciones se renderizará aquí -->
+                    <div class="score-cell">
+                        <div class="v pot">${fmt(p.potential_score, 1)}</div>
+                        <div class="l">Potencial /40</div>
                     </div>
-            `;
-
-            let marketHealthHtml = '';
-            if (data.market_analysis && data.market_analysis.stage_distribution) {
-                const stageDist = data.market_analysis.stage_distribution;
-                const totalStocks = data.summary.total_analyzed;
-                
-                const stage2_total = (stageDist["Stage 2 (Uptrend)"] || 0) + (stageDist["Stage 2 (Developing)"] || 0);
-                const stage1_3_total = (stageDist["Stage 1/3 (Base/Top)"] || 0);
-                const stage4_total = (stageDist["Stage 4 (Decline)"] || 0);
-                const other_total = totalStocks - (stage2_total + stage1_3_total + stage4_total);
-
-                const stages = {
-                    "Stage 2": { color: "#16a34a", value: stage2_total },
-                    "Stage 1/3": { color: "#f59e0b", value: stage1_3_total },
-                    "Stage 4": { color: "#ef4444", value: stage4_total },
-                    "Other": { color: "#6b7280", value: other_total }
-                };
-
-                marketHealthHtml = `
-                    <div class="market-health">
-                        <div class="section-title">📊 Distribución por Stage</div>
-                        <div class="chart-container">
-                `;
-
-                for (const [name, details] of Object.entries(stages)) {
-                    const percentage = totalStocks > 0 ? (details.value / totalStocks) * 100 : 0;
-                    marketHealthHtml += `
-                        <div class="chart-bar" style="height: ${percentage > 5 ? percentage : 5}%; background-color: ${details.color};">
-                            <div class="bar-value">${percentage.toFixed(0)}%</div>
-                            <div class="bar-label">${name}</div>
-                        </div>
-                    `;
-                }
-
-                marketHealthHtml += `
-                        </div>
-                    </div>
-                `;
-            }
-
-            let eliminationHtml = '';
-            const eliminationAnalysis = data.elimination_analysis;
-            if (eliminationAnalysis && eliminationAnalysis.top_reasons && Object.keys(eliminationAnalysis.top_reasons).length > 0) {
-                eliminationHtml = `
-                    <div class="elimination-analysis">
-                        <div class="section-title">🚫 Principales Razones de Descarte</div>
-                        <div class="elimination-list">
-                `;
-
-                for (const [reason, details] of Object.entries(eliminationAnalysis.top_reasons)) {
-                    eliminationHtml += `
-                        <div class="elimination-item">
-                            <div class="elimination-header">
-                                <span class="reason-text">${reason}</span>
-                                <span class="reason-stats">${details.count} (${details.percentage}%)</span>
-                            </div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar" style="width: ${details.percentage}%;"></div>
-                            </div>
-                        </div>
-                    `;
-                }
-
-                eliminationHtml += `
-                        </div>
-                    </div>
-                `;
-            }
-
-            const updateTime = new Date(data.timestamp).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
-            const footerHtml = `
-                <div class="last-update">
-                    Última actualización: ${updateTime}<br>
-                    <small>Desarrollado por 0t4c0n 🦊 | Metodología SEPA de Mark Minervini</small>
                 </div>
-            `;
-            contentEl.innerHTML = summaryHtml + marketBreadthHtml + marketHealthHtml + eliminationHtml + topPicksHtml + footerHtml;
-            renderTopPicks(allTopPicks, data); // Renderizar la lista inicial
-        }
 
-        function renderTopPicks(picks, data) {
-            const container = document.getElementById('top-picks-list');
-            let picksHtml = '';
-            if (picks && picks.length > 0) {
-                    picks.forEach(stock => {
-                    const passesAll = stock.stage_analysis.passes_all_filters;
-                    const cardClass = passesAll ? 'has-badge' : ''; /* Clase para CSS condicional */
-                    const perfectBadge = passesAll ? '<div class="perfect-candidate-badge">✅ All Filters</div>' : '';
-                    
-                    // Lógica de indicadores mejorada para distinguir VCP de solo acumulación
-                    let indicatorsHtml = '';
-                    if (stock.technical_indicators.vcp_detected) {
-                        indicatorsHtml += '<span class="indicator-badge vcp-badge">⚡ VCP Pattern</span>';
-                    } else if (stock.technical_indicators.institutional_accumulation) {
-                        indicatorsHtml += '<span class="indicator-badge accumulation-badge">🏦 Accumulation</span>';
-                    }
+                <div class="section-subtitle">Niveles Wyckoff</div>
+                <div class="levels-grid">
+                    <div class="kv"><span class="k">S1 soporte</span><span class="v">${fmtPrice(w.s1_level)}</span></div>
+                    <div class="kv"><span class="k">POC anual</span><span class="v">${fmtPrice(w.poc_level)}</span></div>
+                    <div class="kv"><span class="k">Confluencia</span><span class="v">${fmt(w.confluence_score, 1)}/30</span></div>
+                    <div class="kv"><span class="k">HVNs</span><span class="v">${w.hvn_count || 0}</span></div>
+                </div>
 
-                    // Otros indicadores independientes
-                    if (stock.technical_indicators.institutional_evidence) indicatorsHtml += '<span class="indicator-badge">Institutional ✓</span>';
-                    if (stock.fundamental_metrics.earnings_acceleration) indicatorsHtml += '<span class="indicator-badge">Earnings+</span>';
-                    if (stock.fundamental_metrics.roe_strong) indicatorsHtml += '<span class="indicator-badge">ROE+</span>';
-                    
-                    const entrySignal = stock.entry_point.signal;
-                    const entrySignalText = stock.entry_point.signal_text;
-                    const entrySignalClass = stock.entry_point.css_class;
+                ${sp.detected ? `
+                <div class="section-subtitle">Spring (Fase C)</div>
+                <div class="detail-row"><span class="k">Fecha</span><span class="v">${sp.date || '—'}</span></div>
+                <div class="detail-row"><span class="k">Mínimo Spring</span><span class="v">${fmtPrice(sp.low)}</span></div>
+                <div class="detail-row"><span class="k">Volumen</span><span class="v">${fmt(sp.volume_ratio, 2)}× SMA(20)</span></div>
+                <div class="detail-row"><span class="k">Cierre vela</span><span class="v">${fmt((sp.close_position || 0) * 100, 1)}% del rango</span></div>
+                <div class="detail-row"><span class="k">Perforación</span><span class="v">−${fmt(sp.depth_pct, 2)}% bajo S1</span></div>
+                ` : ''}
 
-                    picksHtml += `
-                        <div class="stock-card ${cardClass}">
-                            ${perfectBadge}
-                            <div class="rank">#${stock.rank}</div>
-                            <div class="stock-header">
-                                <div class="stock-info">
-                                    <h3>${stock.symbol}</h3>
-                                    <div class="company">${stock.company || ''}</div>
-                                    <div class="sector">${stock.sector || ''}</div>
-                                </div>
-                                <div class="stock-price">
-                                    <div class="minervini-score">Score: ${stock.minervini_score.toFixed(1)}</div>
-                                </div>
-                            </div>
-                            
-                            <div class="stats-grid">
-                                <div class="stat-item">
-                                    <div class="stage-badge">${stock.stage_analysis.icon} ${stock.stage_analysis.stage}</div>
-                                    <div class="stat-label">Stage Analysis</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stage-badge">${stock.relative_strength.strength_label}</div>
-                                    <div class="stat-label">RS Rating: ${stock.relative_strength.rs_rating.toFixed(1)}</div>
-                                </div>
-                            </div>
+                ${t.detected ? `
+                <div class="section-subtitle">Test (Gatillo entrada)</div>
+                <div class="detail-row"><span class="k">Fecha</span><span class="v">${t.date || '—'}</span></div>
+                <div class="detail-row"><span class="k">Días tras Spring</span><span class="v">${t.timing_days ?? '—'}d (${fmt(t.timing_score, 0)}/20 pts)</span></div>
+                <div class="detail-row"><span class="k">Volumen</span><span class="v">${fmt(t.volume_ratio, 2)}× SMA(20)</span></div>
+                ` : ''}
 
-                            ${indicatorsHtml ? `<div class="technical-indicators">${indicatorsHtml}</div>` : ''}
-                            
-                            <div class="entry-signal ${entrySignalClass}">
-                                🚦 Punto de Entrada: <strong>${entrySignalText}</strong>
-                            </div>
-                        </div>
-                    `;
-                    });
-                } else {
-                    picksHtml = `
-                    <div class="no-results">
-                        <div class="no-results-icon">🎯</div>
-                        <div class="no-results-title">Sin Candidatos Ideales Hoy</div>
-                        <div class="no-results-subtitle">Ninguna acción pasó los 11 filtros estrictos de Minervini.</div>
-                        <div class="minervini-criteria">
-                            <div class="criteria-title">📋 Metodología SEPA</div>
-                            <div class="criteria-section">
-                                <div class="criteria-subtitle">Filtros Técnicos</div>
-                                <div class="criteria-list">
-                                    ${data.minervini_criteria.technical_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
-                                </div>
-                            </div>
-                            <div class="criteria-section">
-                                <div class="criteria-subtitle">Filtros Fundamentales</div>
-                                <div class="criteria-list">
-                                    ${data.minervini_criteria.fundamental_filters.map(f => `<div class="criteria-item">${f}</div>`).join('')}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    `;
-            }
-            container.innerHTML = picksHtml;
-        }
+                <div class="section-subtitle">Calidad de la base</div>
+                <div class="detail-row"><span class="k">OBV en base</span><span class="v ${bq.obv_positive ? 'green' : 'red'}">${bq.obv_positive ? '✓ Acumulación' : '✗ Distribución'} (${fmt(bq.obv_trend, 3)})</span></div>
+                <div class="detail-row"><span class="k">Anchura base</span><span class="v">${bq.base_width_days || 0} días en rango</span></div>
+                <div class="detail-row"><span class="k">RS Rating</span><span class="v">${fmt(r.rs_rating, 0)}/100 (${r.label || ''})</span></div>
+                <div class="detail-row"><span class="k">Industria rank</span><span class="v">${fmt(mc.industry_rank, 0)}/100</span></div>
 
-        document.addEventListener('DOMContentLoaded', loadData);
+                <div class="section-subtitle">Gestión de riesgo</div>
+                <div class="risk-grid">
+                    <div class="kv"><span class="k">Entrada</span><span class="v">${fmtPrice(rm.entry_price)}</span></div>
+                    <div class="kv"><span class="k">Stop Loss</span><span class="v sl">${fmtPrice(rm.sl)}</span></div>
+                    <div class="kv"><span class="k">TP1 (50%)</span><span class="v tp">${fmtPrice(rm.tp1)}</span></div>
+                    <div class="kv"><span class="k">TP2 (50%)</span><span class="v tp">${fmtPrice(rm.tp2)}</span></div>
+                    <div class="kv"><span class="k">R:R TP1</span><span class="v">1:${fmt(rm.rr_tp1, 2)}</span></div>
+                    <div class="kv"><span class="k">R:R TP2</span><span class="v">1:${fmt(rm.rr_tp2, 2)}</span></div>
+                    <div class="kv"><span class="k">Riesgo</span><span class="v sl">${fmtPct(rm.risk_pct)}</span></div>
+                    <div class="kv"><span class="k">ATR(14)</span><span class="v atr">${fmt(rm.atr, 3)}</span></div>
+                </div>
+                <div class="risk-explanation">${rm.sl_explanation || ''} · Distancia precio→SL: ${fmtPct(rm.current_to_sl_pct)}</div>
+            </div>`;
+    }
+
+    loadDashboard();
     </script>
 </body>
 </html>

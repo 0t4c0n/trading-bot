@@ -1,12 +1,11 @@
 # .github/workflows/daily-trading-analysis.yml
-name: Minervini SEPA Analysis Diario
+name: Wyckoff Spring Analysis Diario
 
 on:
   schedule:
-    # Ejecutar de Lunes a Viernes, 5-6 horas después del cierre del mercado de EE. UU.
-    # Se usa una hora UTC fija (01:00) que funciona para ambos horarios (estándar y verano).
-    # Martes a Sábado en UTC para cubrir los días de mercado de Lunes a Viernes.
-    - cron: '0 1 * * 2-6' # 01:00 UTC
+    # Lunes a Viernes, 5-6h después del cierre del mercado US (01:00 UTC fijo).
+    # Martes a Sábado UTC = Lunes a Viernes US.
+    - cron: '0 1 * * 2-6'
   workflow_dispatch:  # Permitir ejecución manual
 
 # PERMISOS NECESARIOS PARA GITHUB PAGES
@@ -15,92 +14,78 @@ permissions:
   pages: write
   id-token: write
 
-# Asegurar que solo un workflow corra a la vez
+# Solo un workflow simultáneo
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  minervini-analysis:
+  wyckoff-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # 4 horas máximo para análisis Minervini completo
-    
-    # Configurar entorno para GitHub Pages
+    timeout-minutes: 240  # 4 horas máximo
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    
+
     steps:
     - name: Checkout código
       uses: actions/checkout@v4
-      
+
     - name: Configurar Python y caché de dependencias
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
         cache: 'pip'
-        
+
     - name: Instalar dependencias
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-        
-    - name: Ejecutar análisis Minervini SEPA completo
+
+    - name: Ejecutar análisis Wyckoff Spring
       run: |
-        echo "Iniciando análisis Minervini SEPA de todas las acciones NYSE + NASDAQ..."
-        echo "Sistema: 11 filtros (8 técnicos + 3 fundamentales)"
-        echo "Metodología: SEPA de Mark Minervini"
+        echo "=== WYCKOFF SPRING SCREENER ==="
+        echo "Estrategia: Swing Trading Macro | Temporalidad: Diario (1D)"
+        echo "Metodología: Fase C Wyckoff + Volume Profile (VPVR)"
+        echo "Filtro de mercado: S&P 500 vs MA200"
+        echo "Universo: NYSE + NASDAQ"
         python script_automated.py
       env:
-        PYTHONUNBUFFERED: 1  # Para ver output en tiempo real
-        
-    - name: Crear JSON para dashboard Minervini
+        PYTHONUNBUFFERED: 1
+
+    - name: Generar JSON del dashboard
       run: |
-        echo "Generando dashboard Minervini con scoring system..."
+        echo "Generando dashboard Wyckoff con scoring dual (Probabilidad + Potencial)..."
         python create_dashboard_data.py
-        
-    - name: Commit and Push Ticker Cache
-      run: |
-        git config --global user.name 'github-actions[bot]'
-        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-        # Añadir el archivo de caché unificado al stage
-        git add ticker_info_cache/ticker_cache.json
-        # Comprobar si hay cambios para comitear
-        if ! git diff --staged --quiet; then
-          echo "Cache changes detected. Committing and pushing..."
-          git commit -m "Chore: Update ticker info cache [skip ci]"
-          git push
-        else
-          echo "No changes to cache. Skipping commit."
-        fi
-        
+
     - name: Verificar archivos generados
       id: verify_data_file
       run: |
-        echo "Verificando la existencia y el contenido de docs/data.json..."
+        echo "Verificando docs/data.json..."
         if [ ! -f docs/data.json ] || [ $(stat -c%s docs/data.json) -lt 200 ]; then
-          echo "::error::El archivo data.json no se generó correctamente o está casi vacío."
+          echo "::error::docs/data.json no se generó correctamente o está casi vacío."
           exit 1
         fi
-        echo "✓ El archivo data.json se generó correctamente. Tamaño: $(stat -c%s docs/data.json) bytes."
-    
+        echo "✓ data.json OK. Tamaño: $(stat -c%s docs/data.json) bytes."
+
     - name: Configurar Pages
       uses: actions/configure-pages@v4
-      
+
     - name: Subir artefacto de Pages
       uses: actions/upload-pages-artifact@v3
       with:
         path: './docs'
-        
+
     - name: Desplegar a GitHub Pages
       id: deployment
       uses: actions/deploy-pages@v4
-      
-    - name: Resumen final Minervini
+
+    - name: Resumen final
       run: |
-        echo "=== MINERVINI SEPA ANALYSIS COMPLETADO ==="
-        echo "🎯 Metodología: SEPA de Mark Minervini"
-        echo "📊 Filtros aplicados: 11 (8 técnicos + 3 fundamentales)"
-        echo "🚀 Dashboard disponible en: ${{ steps.deployment.outputs.page_url }}"
-        echo "⏰ Próxima ejecución: Mañana a la misma hora"
-        echo "📱 Optimizado para móvil con Stage Analysis y RS Rating"
+        echo "=== WYCKOFF SPRING ANALYSIS COMPLETADO ==="
+        echo "🎯 Metodología: Fase C Wyckoff + Volume Profile (VPVR)"
+        echo "📊 Scoring: Probabilidad (0-60) + Potencial (0-40) = Total (0-100)"
+        echo "🛡️ SL con margen ATR anti-volatilidad"
+        echo "🚀 Dashboard: ${{ steps.deployment.outputs.page_url }}"
+        echo "⏰ Próxima ejecución: mañana a la misma hora"
