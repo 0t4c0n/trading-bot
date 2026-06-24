@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from tqdm import tqdm
 
 
@@ -101,9 +101,18 @@ class WyckoffSpringScreener:
 
     # =================== DESCARGA DE DATOS ===================
 
-    def download_all_data(self, symbols, period="2y"):
-        """Descarga datos históricos en lotes con reintentos y backoff."""
+    def download_all_data(self, symbols):
+        """
+        Descarga datos históricos en lotes con reintentos y backoff.
+        Ventana: 15 meses naturales (~327 días de trading), buffer de 67 días
+        sobre el mínimo requerido (MIN_DATA_POINTS=260). ~35% menos datos
+        descargados que con period='2y' sin sacrificar análisis.
+        """
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=465)  # ~15.3 meses naturales
+
         print(f"Iniciando descarga robusta para {len(symbols)} símbolos...")
+        print(f"  Ventana: {start_date.strftime('%Y-%m-%d')} → {end_date.strftime('%Y-%m-%d')} (~15 meses)")
         all_data = {}
         batch_size = 75
         total_batches = (len(symbols) + batch_size - 1) // batch_size
@@ -116,7 +125,7 @@ class WyckoffSpringScreener:
             for attempt in range(3):
                 try:
                     batch_data = yf.download(
-                        batch_symbols, period=period, group_by='ticker',
+                        batch_symbols, start=start_date, end=end_date, group_by='ticker',
                         auto_adjust=True, threads=True, progress=False, timeout=30
                     )
                     for symbol in batch_symbols:
@@ -141,7 +150,10 @@ class WyckoffSpringScreener:
         # Descargar S&P 500 como referencia de mercado y para RS
         print("Descargando índice de referencia (^GSPC)...")
         try:
-            spy_data = yf.download('^GSPC', period=period, auto_adjust=True, progress=False, timeout=30)
+            spy_data = yf.download(
+                '^GSPC', start=start_date, end=end_date,
+                auto_adjust=True, progress=False, timeout=30
+            )
             if not spy_data.empty:
                 if isinstance(spy_data.columns, pd.MultiIndex):
                     spy_data.columns = spy_data.columns.droplevel(-1)
