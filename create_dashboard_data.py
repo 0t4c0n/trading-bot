@@ -309,6 +309,12 @@ def create_wyckoff_dashboard_data():
                         "rr_tp1":        safe_float(row.get('RR_TP1', 0)),
                         "rr_tp2":        safe_float(row.get('RR_TP2', 0)),
                         "atr":           safe_float(row.get('ATR', 0)),
+                        # Salida recomendada: dejar correr con trailing stop (gestión manual).
+                        # El backtest mostró que vender en TP2 capa los runners; el trailing
+                        # captura los grandes movimientos. TP1/TP2 quedan solo como referencia.
+                        "trailing_stop_pct": safe_float(row.get('Trailing_Stop_Pct', 20)),
+                        "exit_strategy":     str(row.get('Exit_Strategy', '')
+                                                 or 'Dejar correr: trailing stop 20% bajo el máximo'),
                         # Distancia precio_actual → SL (cuánto riesgo si se entra al precio actual)
                         "current_to_sl_pct": round(
                             (price - safe_float(row.get('SL', 0))) / price * 100, 2

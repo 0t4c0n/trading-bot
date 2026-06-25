@@ -97,7 +97,18 @@ class WyckoffSpringScreener:
         self.ACTIONABLE_MIN_BASE_WIDTH = 20      # Solo anti-ruido: el backtest mostró que la
                                                   # anchura de base NO predice el resultado, así
                                                   # que no se usa como corte exigente (era 60).
-        self.ACTIONABLE_MIN_DEPTH_PCT = 1.5      # Profundidad mín. del shakeout para operar
+        self.ACTIONABLE_MIN_DEPTH_PCT = 2.0      # Profundidad mín. del shakeout para operar.
+                                                  # Subido 1.5→2.0: el backtest (10.9k trades)
+                                                  # muestra que depth<2% rinde claramente peor
+                                                  # (win 19.6%, exp +1.57R) vs depth≥4 (win 31%,
+                                                  # exp +3.2R). La profundidad es el mejor
+                                                  # predictor de runners; el scoring ya prioriza
+                                                  # los springs profundos (0-20 pts).
+        # SALIDA "DEJAR CORRER" (gestión manual): el backtest mostró que vender en TP2 (~15%)
+        # capa los runners; dejar correr con trailing stop multiplica ×2.7 la rentabilidad
+        # agregada y captura los grandes movimientos (Micron-type). El screener emite el TP1/TP2
+        # como referencia, pero la salida recomendada es trailing stop bajo el máximo alcanzado.
+        self.TRAILING_STOP_PCT = 0.20            # Trailing sugerido: 20% bajo el pico
         # CAP DE RIESGO POR OPERACIÓN: veto entradas cuyo SL quede demasiado abajo (entry muy
         # lejos del punto de rebote). Preservación de capital, no win-rate: una sola pérdida
         # no debe costar >12%. Backtest: cap 12% corta solo el 2.5% de setups sin perder
@@ -890,6 +901,12 @@ class WyckoffSpringScreener:
                 'rr_tp1':      round((tp1 - entry_price) / risk, 2),
                 'rr_tp2':      round((tp2 - entry_price) / risk, 2),
                 'atr':         round(spring_atr, 4),
+                # Salida recomendada (gestión manual): dejar correr con trailing stop.
+                # TP1/TP2 son referencias; el grueso de la rentabilidad viene de los runners.
+                'trailing_stop_pct':   round(self.TRAILING_STOP_PCT * 100, 1),
+                'exit_strategy':       'Dejar correr: trailing stop {:.0f}% bajo el máximo '
+                                       'alcanzado (TP1/TP2 solo de referencia)'.format(
+                                           self.TRAILING_STOP_PCT * 100),
             }
         except Exception:
             return None
@@ -1350,6 +1367,8 @@ class WyckoffSpringScreener:
                 'RR_TP1':       rp.get('rr_tp1', ''),
                 'RR_TP2':       rp.get('rr_tp2', ''),
                 'ATR':          rp.get('atr', ''),
+                'Trailing_Stop_Pct': rp.get('trailing_stop_pct', ''),
+                'Exit_Strategy':     rp.get('exit_strategy', ''),
                 # Metadatos
                 'Data_Points': len(df),
                 'Start_Date':  df.index.min().strftime('%Y-%m-%d'),
