@@ -53,9 +53,16 @@ def find_momentum_picks(data, rs_ratings, market_healthy):
         sig = evaluate_entry(c, h, l, i, float(rs_ratings.get(s, 0)), DEFAULTS)
         if sig is None:
             continue
-        picks.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), **sig))
-    # Ranking: líderes más fuertes primero; a igualdad, menor riesgo
-    picks.sort(key=lambda p: (-p['rs'], p['risk_pct']))
+        # Fuerza bruta del momentum (retorno 6m) para el ranking — es lo único que
+        # ordena (muy débilmente) mejor el retorno futuro. NO se usa el riesgo: el
+        # backtest mostró que premiar bajo riesgo es contraproducente (el tramo <4%
+        # de riesgo es el que peor rinde).
+        mom6m = (c[i] / c[i - MOM_LOOKBACK] - 1) * 100 if c[i - MOM_LOOKBACK] > 0 else 0.0
+        picks.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), mom6m=round(mom6m, 1), **sig))
+    # Ranking por fuerza de momentum. AVISO: ninguna feature predice fiablemente al
+    # runner (correlaciones ≈0); el orden es casi cosmético. El edge está en operar
+    # una CESTA diversificada de los top y dejar correr, no en clavar el #1.
+    picks.sort(key=lambda p: -p['mom6m'])
     return picks
 
 

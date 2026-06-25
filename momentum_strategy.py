@@ -29,7 +29,10 @@ DEFAULTS = dict(
     near_high_max_below=0.25, # descartar si está >25% bajo su máximo de 52s
     pullback_touch=0.05,      # el mínimo reciente tocó la MA50 (±) en este margen
     pullback_floor=0.07,      # ...pero sin perforarla más de un 7%
-    not_extended=0.12,        # no entrar si el precio está >12% sobre la MA50
+    not_extended=0.05,        # CLAVE: el precio actual debe estar a ≤5% sobre la MA50 para
+                              # que sea un rebote REAL (no un pico extendido). Validación
+                              # visual + backtest: bajar de 12% a 5% mejora CAGR 6.6→12.8 y
+                              # Sharpe 0.47→0.80, y elimina las entradas extendidas que fallan.
     swing_window=8,           # ventana del mínimo reciente (pullback / stop)
     atr_period=14,
     max_risk_pct=0.12,        # descartar entradas con stop a >12%
