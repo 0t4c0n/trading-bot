@@ -35,6 +35,7 @@ DEFAULTS = dict(
     max_risk_pct=0.12,        # descartar entradas con stop a >12%
     cooldown=15,              # no re-señalar el mismo símbolo en N sesiones
     min_history=260,
+    trailing_stop_pct=32.0,   # salida recomendada (gestión manual): trailing % bajo el pico
 )
 
 
@@ -43,6 +44,52 @@ def _atr(h, l, c, i, n=14):
         return np.nan
     tr = np.maximum(h[i - n + 1:i + 1] - l[i - n + 1:i + 1], 0.0)
     return float(tr.mean())
+
+
+def evaluate_entry(c, h, l, i, rs_val, params=None):
+    """
+    Evalúa la entrada de momentum en la barra i (sin look-ahead: solo usa datos
+    hasta i incluido). Compartida por el backtest y el screener de producción para
+    garantizar que ambos operan IDÉNTICAMENTE.
+
+    Devuelve dict(signal=True, sl, entry, risk_pct, ma50, hi52, ...) o None.
+    """
+    p = {**DEFAULTS, **(params or {})}
+    if rs_val is None or rs_val < p['rs_min'] or i < 252:
+        return None
+    px = c[i]
+    ma50 = c[i - 50:i].mean()
+    ma200 = c[i - 200:i].mean()
+    ma50_prev = c[i - 70:i - 20].mean()
+    ma200_prev = c[i - 221:i - 21].mean() if i >= 221 else ma200
+    hi52 = h[i - 252:i].max()
+
+    # Trend template: líder en tendencia alcista
+    if not (px > ma50 > ma200 and ma200 > ma200_prev and ma50 > ma50_prev):
+        return None
+    if px > hi52 or px < hi52 * (1 - p['near_high_max_below']):
+        return None
+
+    # Entrada de bajo riesgo: retroceso que TOCA la MA50 en subida y rebota
+    low_sw = l[i - p['swing_window']:i].min()
+    touched = ma50 * (1 - p['pullback_floor']) <= low_sw <= ma50 * (1 + p['pullback_touch'])
+    bounce = px > ma50 and c[i] > c[i - 1] and px <= ma50 * (1 + p['not_extended'])
+    if not (touched and bounce):
+        return None
+
+    at = _atr(h, l, c, i, p['atr_period'])
+    if not np.isfinite(at) or at <= 0:
+        return None
+    sl = low_sw - 0.5 * at
+    risk = (px - sl) / px
+    if risk <= 0 or risk > p['max_risk_pct']:
+        return None
+
+    return dict(signal=True, entry=float(px), sl=round(float(sl), 4),
+                risk_pct=round(float(risk) * 100, 2), ma50=round(float(ma50), 2),
+                ma200=round(float(ma200), 2), hi52=round(float(hi52), 2),
+                pct_from_high=round((px / hi52 - 1) * 100, 1),
+                trailing_stop_pct=round(p.get('trailing_stop_pct', 32.0), 1))
 
 
 def generate_momentum_signals(price_data, spy, step=5, params=None):
@@ -80,42 +127,18 @@ def generate_momentum_signals(price_data, spy, step=5, params=None):
             continue
         rs = pd.Series(mom).rank(pct=True) * 100
 
-        # 2) trigger en los líderes
+        # 2) trigger en los líderes (lógica compartida con el screener de producción)
         for s, rs_val in rs.items():
             if rs_val < p['rs_min']:
                 continue
-            a = A[s]
-            i = a['idx'][T]
-            c, h, l = a['c'], a['h'], a['l']
-            px = c[i]
-            ma50 = c[i - 50:i].mean()
-            ma200 = c[i - 200:i].mean()
-            ma50_prev = c[i - 70:i - 20].mean()
-            ma200_prev = c[i - 221:i - 21].mean() if i >= 221 else ma200
-            hi52 = h[i - 252:i].max() if i >= 252 else h[:i].max()
-
-            # trend template
-            if not (px > ma50 > ma200 and ma200 > ma200_prev and ma50 > ma50_prev):
-                continue
-            if px > hi52 or px < hi52 * (1 - p['near_high_max_below']):
-                continue
-            # pullback a la MA50 + rebote
-            low8 = l[i - p['swing_window']:i].min()
-            touched = ma50 * (1 - p['pullback_floor']) <= low8 <= ma50 * (1 + p['pullback_touch'])
-            bounce = px > ma50 and c[i] > c[i - 1] and px <= ma50 * (1 + p['not_extended'])
-            if not (touched and bounce):
-                continue
             if s in seen and ci - seen[s] < p['cooldown']:
                 continue
-
-            at = _atr(h, l, c, i, p['atr_period'])
-            if not np.isfinite(at) or at <= 0:
-                continue
-            sl = low8 - 0.5 * at
-            risk = (px - sl) / px
-            if risk <= 0 or risk > p['max_risk_pct']:
+            a = A[s]
+            i = a['idx'][T]
+            sig = evaluate_entry(a['c'], a['h'], a['l'], i, rs_val, p)
+            if sig is None:
                 continue
             seen[s] = ci
-            rows.append(dict(symbol=s, date=str(T.date()), sl=round(sl, 4)))
+            rows.append(dict(symbol=s, date=str(T.date()), sl=sig['sl']))
 
     return pd.DataFrame(rows)
