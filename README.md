@@ -1,92 +1,64 @@
-# 🌊 Wyckoff Spring Screener
+# 📈 Momentum Screener
 
-Sistema automatizado de **Swing Trading Macro** basado en la **Fase C de Wyckoff** combinada con análisis de **Volume Profile (VPVR)**. Escanea diariamente todas las acciones del NYSE + NASDAQ buscando rebotes institucionales en soportes estructurales validados por liquidez.
+Sistema automatizado de **momentum / fuerza relativa** al estilo Minervini/O'Neil. Escanea diariamente el NYSE + NASDAQ buscando **líderes de mercado** (las acciones más fuertes) en un **punto de entrada de bajo riesgo**: el rebote en la media de 50 sesiones dentro de una tendencia alcista.
+
+El objetivo es **batir al índice** cabalgando a los grandes ganadores, controlando el riesgo con una entrada precisa y un filtro de mercado estricto.
 
 ## 📱 Dashboard
 
-`https://[tu-usuario].github.io/[nombre-repo]/`
+`https://0t4c0n.github.io/trading-bot/`
 
 ## 🎯 Filosofía de la estrategia
 
-> Capturar giros mayores en soportes estructurales de medio/largo plazo, diseñados para mantener operaciones durante **semanas o meses**.
+> Comprar **líderes fuertes** en el retroceso a una media móvil en subida, y **dejar correr** a los ganadores con un trailing stop. Pocas operaciones, pero las ganadoras corren mucho.
 
-- **Temporalidad única**: gráfico diario (1D)
-- **Universo**: NYSE + NASDAQ (~8000 acciones), **excluye penny stocks (<$5)**
-- **Frecuencia**: ejecución automática diaria (5h tras cierre US)
-- **Resultado**: top 10 setups operables con SL/TP/R:R precisos
-
----
-
-## 🧠 Metodología (Fase C Wyckoff + VPVR)
-
-### 1. Volume Profile Anual (VPVR)
-Calcula el perfil de volumen de las últimas **252 sesiones** (1 año):
-- **POC** (Point of Control): nivel de máximo volumen
-- **HVN** (High Volume Nodes): zonas con volumen ≥1.5× la media
-
-Estos son los precios donde el dinero institucional ha estado más activo → actúan como imán y soporte/resistencia.
-
-### 2. Soporte Estructural S1
-Mínimo más bajo en los **130 días previos a la ventana de búsqueda del Spring**. Es un soporte **establecido**, no el mínimo absoluto del rango (para que el Spring pueda perforarlo).
-
-### 3. Filtro de Confluencia
-S1 debe estar **dentro del 1.5%** de un HVN o POC. Score gradual:
-- 0–0.5%: 30 pts (perfecta) · 0.5–1.0%: 22 pts (alta) · 1.0–1.5%: 14 pts (válida)
-
-### 4. Spring (Fase C) — últimos 60 días
-Vela que cumple **TODAS** las condiciones:
-- `Low < S1` (perforación del soporte)
-- `Close > S1` (recuperación)
-- Cierre en el **tercio superior** del rango (≥67%)
-- Volumen **>1.5× SMA(20)** (absorción institucional)
-
-### 5. Validación post-Spring
-- ❌ **Spring FALLIDO**: si tras el Spring algún Close < Spring Low → invalidado y excluido
-- ⏱️ **Spring CADUCADO**: si pasan >30 días sin Test → señal estancada, excluido
-
-### 6. Test (gatillo de entrada)
-Retroceso a la zona de S1 (±0.5%) con:
-- Volumen < SMA(20) (oferta agotada)
-- Volumen decreciente respecto al día anterior
-
-**Timing ideal**: 5–25 días tras el Spring (max 20 pts en score).
-
-### 7. Filtro de Mercado
-Si el **S&P 500 está por debajo de su MA200**, el mercado es bajista y los Springs tienen mucha menor probabilidad. El score de probabilidad cae a 0–4 pts (de 15 posibles), penalizando heavily esas señales.
+- **Temporalidad**: gráfico diario (1D)
+- **Universo**: NYSE + NASDAQ (solo acciones comunes/ADRs; sin bonos, preferentes, CEF ni SPACs)
+- **Frecuencia**: ejecución automática diaria
+- **Resultado**: lista de líderes en pullback operables hoy, con entrada, stop y guía de salida
 
 ---
 
-## 📊 Sistema de Scoring Dual (0–100)
+## 🧠 Metodología
 
-### Probabilidad (0–60 pts) — ¿es probable que el rebote ocurra?
-| Factor | Pts | Detalle |
-|---|---|---|
-| Salud del mercado | 0–15 | SPY sobre MA200 + alineación MA50/MA200 |
-| Timing del Test | 0–20 | 5–25 días = ideal (20 pts), demás escalado |
-| OBV en la base | 0–15 | Pendiente positiva = acumulación silenciosa |
-| Ranking industrial | 0–10 | Sector en top 25% = 10 pts, top 50% = 7 pts |
+### 1. Filtro de mercado (eliminatorio)
+**Solo se opera si el S&P 500 está sobre su MA200.** En mercado bajista NO se generan picks (a liquidez). El momentum es beta pura: operar en bear dispara el drawdown. El backtest lo confirma — con este filtro el drawdown baja de ~−40% a ~−18%.
 
-### Potencial (0–40 pts) — ¿cuánto puede subir?
-| Factor | Pts | Detalle |
-|---|---|---|
-| Anchura de base (Wyckoff Cause) | 0–15 | Días en rango S1±20% (causa → efecto) |
-| R:R hasta TP2 | 0–15 | R:R ≥4 = 15 pts, ≥3 = 10 pts |
-| Profundidad del shake-out | 0–10 | Wick más profundo = más absorción |
+### 2. Selección — líderes por fuerza relativa
+Una acción es candidata si:
+- **RS top 20%**: su retorno a 6 meses está en el percentil ≥80 del universo
+- **Tendencia alcista**: `precio > MA50 > MA200`, con MA50 y MA200 al alza
+- **Cerca de máximos**: dentro del 25% de su máximo de 52 semanas
 
-**Total = Probabilidad + Potencial**
+### 3. Entrada — rebote en MA50 (bajo riesgo)
+El mejor punto de entrada según el estudio (CAGR 13.8%, Sharpe 0.86 vs MA20/MA10/ruptura):
+- El precio **retrocede y toca la MA50** en subida (mínimo reciente cerca de la MA50)
+- **Rebota**: cierra de nuevo sobre la MA50 y gira al alza
+
+Entrar en el pullback deja el **stop cerca**, así que el riesgo por operación es pequeño aunque la acción sea fuerte.
+
+### 4. Stop y riesgo
+- **Stop Loss** = mínimo del retroceso − 0.5×ATR(14)
+- Se descartan entradas con **riesgo > 12%**
+
+### 5. Salida — dejar correr (gestión manual)
+La salida la gestionas tú con un **trailing stop ~32% bajo el máximo alcanzado**. El backtest mostró que vender en un objetivo fijo capa los runners; dejar correr multiplica ×2.7 la rentabilidad agregada y captura los grandes movimientos.
 
 ---
 
-## 🛡️ Gestión de Riesgo
+## 📊 Resultados del backtest (cartera, 2020–2025)
 
-| | Fórmula | Notas |
+Universo ~2.500 acciones, simulación de cartera realista (tamaño por riesgo, salida de mercado, trailing 32%):
+
+| | Estrategia | SPY (comprar y mantener) |
 |---|---|---|
-| **Entrada** | S1 × 1.002 | Ligeramente por encima de S1 |
-| **Stop Loss** | Spring Low − 0.5×ATR(14) | Margen anti-volatilidad |
-| **TP1 (50%)** | Resistencia local 60d previos al Spring | Mover SL a breakeven |
-| **TP2 (50%)** | Siguiente HVN superior o R:R 1:3.5 | Dejar correr |
+| **CAGR** | ~15% | 14.6% |
+| **Max Drawdown** | **~−17%** | −34% |
+| **Sharpe** | **~0.9** | 0.78 |
 
-El margen `0.5×ATR(14)` en el SL es **crítico**: añade un buffer proporcional a la volatilidad típica de cada acción, evitando que el ruido normal del mercado active el stop.
+**Bate al índice en bruto y en riesgo-ajustado, con la mitad de drawdown.**
+
+> ⚠️ **Caveat honesto**: el backtest tiene sesgo de supervivencia (universo actual, sin acciones quebradas) → resultados optimistas. Es un solo periodo. Antes de operar con dinero real conviene validación out-of-sample.
 
 ---
 
@@ -94,35 +66,37 @@ El margen `0.5×ATR(14)` en el SL es **crítico**: añade un buffer proporcional
 
 | Archivo | Función |
 |---|---|
-| `script_automated.py` | Screener principal (descarga, análisis Wyckoff, save CSV) |
-| `create_dashboard_data.py` | Convierte CSV a JSON para el dashboard |
-| `debug_stock.py` | Análisis detallado paso a paso de una acción |
+| `momentum_screener.py` | **Screener diario de producción** (universo → RS → filtro mercado → picks → `docs/data.json`) |
+| `momentum_strategy.py` | Lógica de selección + entrada (compartida entre backtest y producción) |
+| `market_data.py` | Infraestructura de datos (universo, descarga, salud de mercado) |
+| `portfolio_backtest.py` | Motor de backtest de cartera reutilizable (CAGR, drawdown, Sharpe, vs SPY) |
+| `run_portfolio_demo.py` | Pipeline completo de backtest (descarga → señales → cartera → informe) |
 | `docs/index.html` | Dashboard web (responsive móvil) |
-| `docs/data.json` | Output JSON consumido por el dashboard |
 | `.github/workflows/daily-trading-analysis.yml` | Ejecución diaria automática |
 
 ---
 
 ## 🚀 Uso
 
-### Local
+### Screener diario (producción)
 ```bash
 pip install -r requirements.txt
-python script_automated.py        # genera CSVs
-python create_dashboard_data.py   # genera docs/data.json
-open docs/index.html              # abre dashboard local
+python momentum_screener.py        # genera docs/data.json con los picks de hoy
+open docs/index.html               # abre el dashboard local
 ```
 
-### Debug de una acción
+### Backtest de cartera
 ```bash
-# Editar TICKER_TO_DEBUG en debug_stock.py
-python debug_stock.py
+python run_portfolio_demo.py          # backtest sobre universo demo
+python run_portfolio_demo.py --quick  # validación rápida del pipeline
 ```
 
-Muestra paso a paso: estado mercado → VPVR → S1 → confluencia → Spring → Test → Riesgo → Score.
+### Probar una nueva estrategia
+El motor de cartera está **desacoplado**: genera tus señales en formato
+`[symbol, date, sl]` y pásalas a `run_portfolio_backtest()` (ver `portfolio_backtest.py`).
 
 ### CI/CD (GitHub Actions)
-Se ejecuta automáticamente cada día laborable a las 01:00 UTC (5h tras cierre US), genera el análisis completo y despliega a GitHub Pages.
+Se ejecuta automáticamente cada día laborable, genera los picks y despliega a GitHub Pages.
 
 ---
 
@@ -130,33 +104,29 @@ Se ejecuta automáticamente cada día laborable a las 01:00 UTC (5h tras cierre 
 
 ```json
 {
+  "strategy": "Momentum / Fuerza Relativa (líderes + pullback MA50)",
   "market_context": {
     "healthy": true,
-    "status_label": "ALCISTA ✅",
-    "health_score": 14.3
+    "status_label": "ALCISTA ✅ — se opera"
   },
   "summary": {
-    "springs_detected": 12,    // operables (no fallidos ni caducos)
-    "springs_failed": 8,        // invalidados
-    "springs_stale": 5,         // sin Test >30 días
-    "tests_active": 3           // en zona de entrada AHORA
+    "total_analyzed": 4200,
+    "leaders": 508,
+    "picks": 12
   },
   "top_picks": [
     {
       "rank": 1,
       "symbol": "XYZ",
-      "wyckoff_score": 85.5,
-      "probability_score": 52.0,
-      "potential_score": 33.5,
-      "entry_status": { "status": "Test Activo - ENTRADA", "icon": "🎯" },
-      "spring": { "date": "2026-05-15", "low": 12.45, "vol_ratio": 2.8 },
+      "price": 131.60,
+      "relative_strength": { "rs_rating": 93, "label": "Líder" },
+      "trend": { "ma50": 120.28, "ma200": 98.40, "pct_from_52w_high": -12 },
       "risk_management": {
-        "entry_price": 12.97,
-        "sl": 11.83,
-        "tp1": 15.40,
-        "tp2": 17.82,
-        "rr_tp2": 4.2,
-        "current_to_sl_pct": 8.5
+        "entry_price": 131.60,
+        "sl": 117.88,
+        "risk_pct": 10.4,
+        "trailing_stop_pct": 32,
+        "exit_strategy": "Dejar correr: trailing stop 32% bajo el máximo"
       }
     }
   ]

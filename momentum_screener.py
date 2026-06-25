@@ -19,7 +19,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from script_automated import WyckoffSpringScreener
+from market_data import MarketData
 from momentum_strategy import evaluate_entry, DEFAULTS
 
 MOM_LOOKBACK = DEFAULTS['mom_lookback']   # 126 sesiones (6 meses)
@@ -114,16 +114,15 @@ def build_dashboard(picks, market_healthy, market_score, n_universe, n_leaders):
 
 def run_momentum_screener():
     print("=== SCREENER MOMENTUM (líderes + pullback MA50) ===")
-    sc = WyckoffSpringScreener()
-    symbols = sc.get_nyse_nasdaq_symbols()
-    symbols = [s for s in symbols if '^' not in s and '.' not in s and '/' not in s]
+    md = MarketData()
+    symbols = md.get_universe()
     print(f"Universo: {len(symbols)} acciones. Descargando...")
 
-    data = sc.download_all_data(symbols)
+    data = md.download_all_data(symbols)
     spy = data.pop('_MARKET_INDEX', None)
     print(f"Con datos: {len(data)} acciones")
 
-    market_healthy, market_score = sc.check_market_health(spy)
+    market_healthy, market_score = md.check_market_health(spy)
     print(f"Mercado: {'ALCISTA ✅' if market_healthy else 'BAJISTA ⚠️ (a liquidez)'} (score {market_score})")
 
     rs = compute_rs_percentile(data)
