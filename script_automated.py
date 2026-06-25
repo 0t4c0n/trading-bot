@@ -445,6 +445,10 @@ class WyckoffSpringScreener:
             if lows[j] == lows[j - p:j + p + 1].min():
                 pivot_prices.append(float(lows[j]))
 
+        # Descartar pivotes no positivos (datos corruptos): un Low ≤ 0 no es un soporte
+        # válido y rompería el cálculo de proximidad relativa (división por floor).
+        pivot_prices = [pr for pr in pivot_prices if pr > 0]
+
         if not pivot_prices:
             return []
 
