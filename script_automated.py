@@ -94,13 +94,18 @@ class WyckoffSpringScreener:
         # Gate de CALIDAD para operabilidad (separa springs reales de rebotes cualquiera).
         # Validado AAPL-safe: AAPL tuvo base=115d y depth=3.48% (pasa con holgura). NO se puede
         # filtrar por OBV>0 ni vol≥1.5× ni touches≥2: AAPL falla esos (OBV −0.05, vol 1.36, 1 toque).
-        self.ACTIONABLE_MIN_BASE_WIDTH = 60      # Wyckoff "cause": días de base requeridos
+        self.ACTIONABLE_MIN_BASE_WIDTH = 20      # Solo anti-ruido: el backtest mostró que la
+                                                  # anchura de base NO predice el resultado, así
+                                                  # que no se usa como corte exigente (era 60).
         self.ACTIONABLE_MIN_DEPTH_PCT = 1.5      # Profundidad mín. del shakeout para operar
-        # === RANKING POR RIESGO ===
-        # El Top 10 se ordena por Rank_Score = Wyckoff_Score + bonus por riesgo bajo.
-        # El bonus premia un SL cercano al precio actual (menor % de pérdida si se opera hoy).
-        self.RISK_BONUS_POINTS = 20.0   # Bonus máx. (SL pegado al precio: riesgo ~0%)
-        self.RISK_BONUS_MAX_PCT = 8.0   # A partir de este % (precio→SL) el bonus es 0
+        # === RANKING ===
+        # Rank_Score = Wyckoff_Score (sin bonus de riesgo). El antiguo RISK_BONUS premiaba
+        # un SL cercano al precio (riesgo bajo), pero el backtest demostró que es CONTRA-
+        # PRODUCENTE: los setups de stop apretado (risk <3%) ganan solo el 28%, frente al
+        # 65% de los de stop amplio (risk 8%+). Premiar stops ajustados sesgaba el Top hacia
+        # los peores setups (y fue lo que originalmente subió bonos/CEFs). Desactivado (=0).
+        self.RISK_BONUS_POINTS = 0.0    # Desactivado (data-backed): no premiar stops apretados
+        self.RISK_BONUS_MAX_PCT = 8.0   # (sin efecto mientras POINTS=0)
         self.MIN_DATA_POINTS = 260    # Mínimo de velas diarias requeridas
         self.symbol_industries = {}
         self.session = requests.Session()
@@ -893,10 +898,10 @@ class WyckoffSpringScreener:
           - Sector/industria     0-10 pts  (sector en top 50% del universo)
           - Confluencia S1↔VP    0-10 pts  (bonus: S1 sobre POC/HVN refuerza el soporte)
 
-        Score de Potencial (0-40): ¿Cuánto puede subir?
-          - Anchura de base      0-15 pts  (Wyckoff Cause: más días = más fuerza)
+        Score de Potencial (0-40) — pesos recalibrados con backtest (676 springs):
+          - Profundidad shake-out 0-20 pts  (MEJOR PREDICTOR: win 43%→73% según depth)
           - Ratio R:R TP2        0-15 pts  (R:R ≥ 4 = máximo)
-          - Profundidad shake-out 0-10 pts  (wick más profundo = más absorción)
+          - Anchura de base      0-5 pts   (Wyckoff Cause; backtest: no predice → desempate)
 
         Total Wyckoff Score = Probabilidad + Potencial (0-100). Probabilidad se trunca a 60,
         así que la confluencia actúa como bonus que compensa otros componentes flojos.
@@ -930,20 +935,25 @@ class WyckoffSpringScreener:
         elif rank >= 35:
             prob += 2.0
 
-        # --- POTENCIAL ---
+        # --- POTENCIAL (recalibrado con backtest 676 springs, 4.5 años) ---
+        # El backtest mostró: la anchura de base NO predice resultado (corr≈0), mientras
+        # que la PROFUNDIDAD del shakeout sí (win 43%→53%→61%→73% al aumentar depth, y
+        # corr +0.10 con ret60). Se reasigna el peso: base 0-15→0-5, depth 0-10→0-20.
         pot = 0.0
 
-        # 1. Anchura de base — Wyckoff Cause (0-15)
-        if base_width_days >= 80:
-            pot += 15.0
-        elif base_width_days >= 50:
-            pot += 10.0
-        elif base_width_days >= 30:
-            pot += 6.0
-        elif base_width_days >= 15:
+        # 1. Profundidad del shake-out — MEJOR PREDICTOR (0-20)
+        # Tramos anclados a los buckets del backtest (win-rate monotónico con la profundidad).
+        depth = float(spring_info.get('spring_depth_pct', 0))
+        if depth >= 7.0:
+            pot += 20.0   # backtest: 73% win, +11.7% a 60d
+        elif depth >= 4.0:
+            pot += 14.0   # backtest: 61% win
+        elif depth >= 2.0:
+            pot += 8.0    # backtest: 53% win
+        elif depth >= 1.0:
             pot += 3.0
 
-        # 2. R:R TP2 (0-15)
+        # 2. R:R TP2 (0-15) — sin cambios
         rr_tp2 = float((risk_params or {}).get('rr_tp2', 0))
         if rr_tp2 >= 4.0:
             pot += 15.0
@@ -954,14 +964,17 @@ class WyckoffSpringScreener:
         elif rr_tp2 >= 1.5:
             pot += 3.0
 
-        # 3. Profundidad del shake-out (0-10)
-        depth = float(spring_info.get('spring_depth_pct', 0))
-        if depth >= 3.0:
-            pot += 10.0
-        elif depth >= 1.5:
-            pot += 6.0
-        elif depth >= 0.5:
+        # 3. Anchura de base — Wyckoff Cause, PESO REDUCIDO (0-5)
+        # El concepto (causa-efecto) es válido en teoría pero el backtest no lo respalda
+        # como predictor, así que solo aporta un matiz de desempate, no manda en el score.
+        if base_width_days >= 80:
+            pot += 5.0
+        elif base_width_days >= 50:
             pot += 3.0
+        elif base_width_days >= 30:
+            pot += 2.0
+        elif base_width_days >= 15:
+            pot += 1.0
 
         probability_score = round(min(60.0, prob), 1)
         potential_score   = round(min(40.0, pot),  1)
