@@ -98,6 +98,11 @@ class WyckoffSpringScreener:
                                                   # anchura de base NO predice el resultado, así
                                                   # que no se usa como corte exigente (era 60).
         self.ACTIONABLE_MIN_DEPTH_PCT = 1.5      # Profundidad mín. del shakeout para operar
+        # CAP DE RIESGO POR OPERACIÓN: veto entradas cuyo SL quede demasiado abajo (entry muy
+        # lejos del punto de rebote). Preservación de capital, no win-rate: una sola pérdida
+        # no debe costar >12%. Backtest: cap 12% corta solo el 2.5% de setups sin perder
+        # rendimiento (respeta el tramo ganador 8-12%) y veta cualquier stop absurdo (20-30%).
+        self.MAX_RISK_PCT = 12.0
         # === RANKING ===
         # Rank_Score = Wyckoff_Score (sin bonus de riesgo). El antiguo RISK_BONUS premiaba
         # un SL cercano al precio (riesgo bajo), pero el backtest demostró que es CONTRA-
@@ -1168,6 +1173,18 @@ class WyckoffSpringScreener:
         # Paso 10: Gestión de riesgo
         risk_params = self.calculate_risk_params(spring_info, df, s1, hvn_list)
         result['risk_params'] = risk_params
+
+        # Paso 10b: CAP DE RIESGO POR OPERACIÓN (preservación de capital).
+        # Aunque el backtest muestra que stops anchos no rinden peor, un stop demasiado
+        # lejos (entry muy por encima del punto de rebote) implica una pérdida enorme si
+        # falla. Veto los setups con risk% > MAX_RISK_PCT: nunca operar con el SL tan abajo.
+        if result['is_actionable'] and risk_params:
+            rpct = float(risk_params.get('risk_pct', 0))
+            if rpct > self.MAX_RISK_PCT:
+                result['is_actionable'] = False
+                result['entry_status'] = (
+                    f'Riesgo excesivo (SL a {rpct:.1f}% > {self.MAX_RISK_PCT:.0f}% máx.)'
+                )
 
         # Paso 11: Scoring dual — Springs fallidos / caducados reciben score 0
         if result['spring_failed'] or result['spring_stale']:
