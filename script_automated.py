@@ -2,9 +2,42 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
+import re
 import time
 from datetime import datetime, timedelta
 from tqdm import tqdm
+
+
+# === FILTRO DE TIPO DE INSTRUMENTO ===
+# El screener de NASDAQ devuelve el campo 'sector' VACÍO para el 100% de los valores,
+# así que NO se puede filtrar por sector. En cambio, el campo 'name' (descripción del
+# valor) separa limpiamente las acciones comunes del resto. Validado sobre el universo
+# completo (6838 valores): mantiene 4234 acciones, descarta bonos, preferentes, fondos
+# cerrados (CEF), SPACs, warrants y units, e incluye ADRs comunes (BABA, NVS, TM…).
+#
+# KEEP: el nombre debe contener "Common Stock" / "Common Shares" / "(American) Depositary
+#       Shares" (ADRs comunes).
+# DROP: bonos (Notes, Bond, Debenture, %, due 20xx), preferentes (Preferred, Series),
+#       SPACs (Acquisition Corp, Ordinary Shares, Units, Rights, Warrant), fondos
+#       (Fund, ETF/ETN). Truco "Trust": los REITs operativos dicen "Common Stock" (se
+#       mantienen), los CEF dicen "Common Shares" (se descartan).
+_INSTRUMENT_DROP_RE = re.compile(
+    r'(\bnotes?\b|\bbond\b|debenture|%|\bwarrant|\bright(s)?\b|'
+    r'preferred|\bseries\b|\bdue\s+20|\bunit(s)?\b|\betf\b|\betn\b|\bfund\b|'
+    r'acquisition corp|\bordinary shares\b)', re.I)
+_INSTRUMENT_KEEP_RE = re.compile(
+    r'\b(common stock|common shares|american depositary shares|depositary shares)\b', re.I)
+
+
+def is_common_stock(name):
+    """True si el nombre del valor corresponde a una acción común (o ADR común)."""
+    n = (name or '').strip()
+    if not n or _INSTRUMENT_DROP_RE.search(n):
+        return False
+    # Trust + "Common Shares" = fondo cerrado (CEF) camuflado → fuera.
+    if re.search(r'\btrust\b', n, re.I) and re.search(r'common shares', n, re.I):
+        return False
+    return bool(_INSTRUMENT_KEEP_RE.search(n))
 
 
 class WyckoffSpringScreener:
@@ -87,15 +120,25 @@ class WyckoffSpringScreener:
                 if 'data' in data and 'table' in data['data']:
                     rows = data['data']['table']['rows']
                     symbols = []
+                    skipped = 0
                     for row in rows:
                         sym = row['symbol']
+                        name = row.get('name', '') or ''
+                        # Filtro de tipo: solo acciones comunes / ADRs comunes.
+                        # Descarta bonos, preferentes, CEF, SPACs, warrants y units,
+                        # que contaminaban el ranking (su baja volatilidad inflaba el
+                        # bonus de riesgo y copaban el Top 10).
+                        if not is_common_stock(name):
+                            skipped += 1
+                            continue
                         symbols.append(sym)
                         self.symbol_industries[sym] = {
-                            'name': row.get('name', '') or '',
+                            'name': name,
                             'industry': row.get('industry', 'Unknown') or 'Unknown',
                             'sector': row.get('sector', 'Unknown') or 'Unknown',
                         }
-                    print(f"  Obtenidos {len(symbols)} símbolos de {exchange}.")
+                    print(f"  Obtenidos {len(symbols)} acciones de {exchange} "
+                          f"({skipped} no-acciones descartadas: bonos/preferentes/CEF/SPAC).")
                     return symbols
             return []
         except Exception as e:
@@ -755,11 +798,43 @@ class WyckoffSpringScreener:
             pre_spring = df.iloc[tp1_start:spring_idx]['High']
             tp1 = float(pre_spring.max()) if not pre_spring.empty else entry_price * 1.05
 
-            # TP2: siguiente HVN por encima de la entrada, o R:R 1:3.5
-            hvn_above = sorted(h for h in hvn_list if h > entry_price * 1.01)
-            if hvn_above and (hvn_above[0] - entry_price) / risk >= 3.0:
-                tp2 = hvn_above[0]
-            else:
+            # TP2: objetivo estructural real. Orden de prioridad:
+            #  1. HVN por encima de TP1 (zona de distribución previa del Volume Profile)
+            #  2. Máximo histórico días 60-200 antes del Spring (techo del rango anterior)
+            #  3. HVN por encima de la entrada con R:R ≥ 2.5 (búsqueda más amplia)
+            #  4. Fallback mecánico entry + 3.5 × risk (sin base estructural)
+            # Cap: R:R ≤ 8 para evitar objetivos poco realistas.
+            _MIN_TP2_RR = 2.5
+            _MAX_TP2_RR = 8.0
+            tp2 = None
+
+            # 1. HVN sobre TP1 del Volume Profile
+            for hvn in sorted(h for h in hvn_list if h > tp1 * 1.01):
+                rr = (hvn - entry_price) / risk
+                if _MIN_TP2_RR <= rr <= _MAX_TP2_RR:
+                    tp2 = hvn
+                    break
+
+            # 2. Máximo histórico del período 60-200 días antes del Spring
+            if tp2 is None:
+                hist_start = max(0, spring_idx - 200)
+                hist_end   = max(0, spring_idx - 60)
+                if hist_end > hist_start:
+                    hist_high = float(df.iloc[hist_start:hist_end]['High'].max())
+                    rr = (hist_high - entry_price) / risk
+                    if _MIN_TP2_RR <= rr <= _MAX_TP2_RR:
+                        tp2 = hist_high
+
+            # 3. HVN sobre la entrada (búsqueda más amplia, umbral mínimo)
+            if tp2 is None:
+                for hvn in sorted(h for h in hvn_list if h > entry_price * 1.005):
+                    rr = (hvn - entry_price) / risk
+                    if _MIN_TP2_RR <= rr <= _MAX_TP2_RR:
+                        tp2 = hvn
+                        break
+
+            # 4. Fallback mecánico (sin base estructural)
+            if tp2 is None:
                 tp2 = entry_price + 3.5 * risk
 
             return {
