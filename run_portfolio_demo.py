@@ -101,6 +101,8 @@ def generate_signals(price_data, spy, step=5, warmup=290, fwd_buffer=2):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--quick', action='store_true', help='Universo mínimo (validar pipeline)')
+    ap.add_argument('--momentum', action='store_true',
+                    help='Usar la estrategia de momentum (líderes + pullback) en vez de Wyckoff')
     ap.add_argument('--start', default='2019-09-01')
     ap.add_argument('--step', type=int, default=5, help='Frecuencia del walk-forward (sesiones)')
     args = ap.parse_args()
@@ -109,12 +111,21 @@ def main():
     print(f"Descargando {len(universe)} acciones...")
     price_data, spy = download(universe, start=args.start)
     print(f"Con datos: {len(price_data)} | Generando señales (walk-forward)...")
-    signals = generate_signals(price_data, spy, step=args.step)
+
+    if args.momentum:
+        from momentum_strategy import generate_momentum_signals
+        signals = generate_momentum_signals(price_data, spy, step=args.step)
+        # Config validada para momentum: salida de cartera + trailing ancho
+        cfg = dict(market_filter_ma=200, trailing_pct=0.32)
+    else:
+        signals = generate_signals(price_data, spy, step=args.step)
+        cfg = {}   # Wyckoff usa los defaults (mean-reversion, sin market exit)
+
     print(f"Señales: {len(signals)}\n")
     if signals.empty:
         print("Sin señales en este universo/periodo.")
         return
-    results = run_portfolio_backtest(signals, price_data, spy)
+    results = run_portfolio_backtest(signals, price_data, spy, cfg)
     print_report(results)
 
 

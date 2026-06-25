@@ -27,6 +27,8 @@ DEFAULT_CONFIG = dict(
     commission_pct=0.001,      # comisión por lado (0.1%)
     max_hold_days=252,         # cierre forzoso tras N sesiones
     min_position_value=200.0,  # no abrir posiciones ridículas
+    market_filter_ma=None,     # si se fija (p.ej. 200): cierra TODA la cartera y no entra
+                               # mientras el SPY esté bajo su MA(N). Protege drawdown.
 )
 
 
@@ -79,6 +81,12 @@ def run_portfolio_backtest(signals, price_data, spy, config=None):
         entry_day = cal[ci + 1]
         entries_by_day.setdefault(entry_day, []).append(dict(symbol=r['symbol'], sl=float(r['sl'])))
 
+    # Filtro de mercado opcional: SPY sobre/bajo su MA(N)
+    market_ok_by_day = None
+    if cfg.get('market_filter_ma'):
+        spy_ma = spy['Close'].rolling(int(cfg['market_filter_ma'])).mean()
+        market_ok_by_day = (spy['Close'] >= spy_ma)
+
     cash = cfg['initial_capital']
     positions = []   # dicts: symbol, shares, entry, stop, peak, entry_day
     trades = []
@@ -123,6 +131,27 @@ def run_portfolio_backtest(signals, price_data, spy, config=None):
                 still_open.append(p)
         positions = still_open
 
+        # ── 1b. Filtro de mercado: si el SPY está bajo su MA, liquidar TODO ─────
+        market_ok = True
+        if market_ok_by_day is not None:
+            mo = market_ok_by_day.get(day)
+            market_ok = bool(mo) if mo is not None and not pd.isna(mo) else True
+        if not market_ok and positions:
+            survivors = []
+            for p in positions:
+                px_c = price_at(p['symbol'], day, 'c')
+                if px_c is None:
+                    survivors.append(p)   # sin barra: no se puede liquidar hoy
+                    continue
+                proceeds = p['shares'] * px_c * (1 - cfg['commission_pct'])
+                cash += proceeds
+                trades.append(dict(symbol=p['symbol'], entry_day=p['entry_day'], exit_day=day,
+                                   entry=p['entry'], exit=px_c, shares=p['shares'],
+                                   pnl=proceeds - p['cost_basis'],
+                                   ret_pct=(px_c / p['entry'] - 1) * 100,
+                                   bars=cal_pos[day] - cal_pos[p['entry_day']]))
+            positions = survivors
+
         # equity al inicio (para dimensionar) = cash + MTM
         def mtm():
             v = cash
@@ -132,8 +161,8 @@ def run_portfolio_backtest(signals, price_data, spy, config=None):
             return v
         equity = mtm()
 
-        # ── 2. Nuevas entradas (apertura de hoy) ───────────────────────────────
-        for s in entries_by_day.get(day, []):
+        # ── 2. Nuevas entradas (apertura de hoy) — solo si el mercado lo permite ─
+        for s in (entries_by_day.get(day, []) if market_ok else []):
             if len(positions) >= cfg['max_positions']:
                 break
             entry = price_at(s['symbol'], day, 'o')
