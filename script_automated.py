@@ -80,6 +80,17 @@ class WyckoffSpringScreener:
         # Springs sin Test y entradas pasadas → watchlist (no operables).
         self.ACTIONABLE_TEST_MAX_AGE = 5         # Días máx. desde Test para entrada vigente
         self.ACTIONABLE_PRICE_MAX_ABOVE_S1 = 0.02 # 2% máx. sobre S1 para entrada vigente
+        # LÍMITE INFERIOR: el precio actual DEBE haber reconquistado el soporte S1. La esencia
+        # del Spring es el "jump back across the creek": tras perforar S1 el precio vuelve POR
+        # ENCIMA. Si el precio sigue bajo S1, o el reclaim falló o el Test perforó el soporte
+        # → no es un rebote, es un cuchillo cayendo. La zona de entrada válida es [S1, S1×1.02].
+        self.ACTIONABLE_PRICE_MIN_ABOVE_S1 = 0.0  # Precio debe estar AL MENOS en S1 (reclaim)
+        # === TENDENCIA ALCISTA DE FONDO ===
+        # Solo operar Springs en acciones con tendencia de largo plazo al alza: la MA200 debe
+        # tener pendiente positiva (sube respecto a hace ~1 mes). Filtra cuchillos en
+        # tendencias bajistas estructurales (oro/mineras en desplome, etc.).
+        self.UPTREND_MA_PERIOD = 200        # Media de largo plazo (200 sesiones)
+        self.UPTREND_SLOPE_LOOKBACK = 21    # Comparar MA200 hoy vs hace ~1 mes (pendiente)
         # Gate de CALIDAD para operabilidad (separa springs reales de rebotes cualquiera).
         # Validado AAPL-safe: AAPL tuvo base=115d y depth=3.48% (pasa con holgura). NO se puede
         # filtrar por OBV>0 ni vol≥1.5× ni touches≥2: AAPL falla esos (OBV −0.05, vol 1.36, 1 toque).
@@ -325,6 +336,25 @@ class WyckoffSpringScreener:
             pct_below = (ma200_v - current) / ma200_v * 100
             score = max(0.0, 4.0 - pct_below * 0.4)
             return False, round(score, 1)
+
+    def check_long_term_uptrend(self, df):
+        """
+        True si la acción está en tendencia alcista de fondo: la MA200 tiene
+        pendiente positiva (sube respecto a hace ~UPTREND_SLOPE_LOOKBACK sesiones).
+        Filtra cuchillos cayendo dentro de tendencias bajistas estructurales.
+        Conservador: si no hay datos suficientes para una MA200 fiable → False.
+        """
+        period   = self.UPTREND_MA_PERIOD
+        lookback = self.UPTREND_SLOPE_LOOKBACK
+        close = df['Close'].astype(float)
+        if len(close) < period + lookback:
+            return False
+        ma = close.rolling(period).mean()
+        ma_now  = float(ma.iloc[-1])
+        ma_prev = float(ma.iloc[-1 - lookback])
+        if not (np.isfinite(ma_now) and np.isfinite(ma_prev)) or ma_prev <= 0:
+            return False
+        return ma_now > ma_prev
 
     # =================== VOLUME PROFILE (VPVR) ===================
 
@@ -976,6 +1006,8 @@ class WyckoffSpringScreener:
             'probability_score': 0.0,
             'potential_score': 0.0,
             'wyckoff_score': 0.0,
+            # Tendencia de fondo
+            'uptrend_ok': False,  # MA200 con pendiente positiva
             # Estado y riesgo
             'entry_status': 'Sin Señal',
             'is_actionable': False,  # True solo si el setup sigue vivo y operable
@@ -990,6 +1022,15 @@ class WyckoffSpringScreener:
         # Filtro penny stocks: precio < $5 → ruido, spreads enormes, manipulación
         if result['current_price'] < self.MIN_PRICE:
             result['entry_status'] = f'Filtrado (penny stock <${self.MIN_PRICE:.0f})'
+            return result
+
+        # FILTRO ELIMINATORIO: tendencia alcista de fondo OBLIGATORIA.
+        # La MA200 debe tener pendiente positiva. Sin ella, la acción se descarta por
+        # completo (no se buscan Springs): solo operamos rebotes dentro de tendencias
+        # estructurales al alza, nunca cuchillos cayendo en tendencias bajistas.
+        result['uptrend_ok'] = self.check_long_term_uptrend(df)
+        if not result['uptrend_ok']:
+            result['entry_status'] = 'Filtrado (sin tendencia alcista LP — MA200 sin pendiente positiva)'
             return result
 
         # Paso 1: Volume Profile
@@ -1076,12 +1117,21 @@ class WyckoffSpringScreener:
         elif test_info:
             days_since_test = int(len(df) - 1) - int(test_info['index'])
             price_above_s1_pct = (result['current_price'] - s1) / s1
+            # El precio DEBE haber reconquistado el soporte: dentro de [S1, S1×1.02].
+            price_reclaimed = price_above_s1_pct >= self.ACTIONABLE_PRICE_MIN_ABOVE_S1
+            in_entry_zone   = price_reclaimed and price_above_s1_pct <= self.ACTIONABLE_PRICE_MAX_ABOVE_S1
 
-            if test_info.get('is_current'):
+            if not price_reclaimed:
+                # Precio por debajo de S1: el soporte no se ha reconquistado (o el Test lo
+                # perforó). No es un rebote válido → no operable.
+                result['entry_status'] = (
+                    f'Precio bajo soporte ({price_above_s1_pct*100:.1f}% vs S1) — sin reclaim'
+                )
+                result['is_actionable'] = False
+            elif test_info.get('is_current'):
                 result['entry_status'] = '🎯 ENTRADA INMEDIATA (Test hoy)'
                 result['is_actionable'] = True
-            elif (days_since_test <= self.ACTIONABLE_TEST_MAX_AGE and
-                  price_above_s1_pct <= self.ACTIONABLE_PRICE_MAX_ABOVE_S1):
+            elif days_since_test <= self.ACTIONABLE_TEST_MAX_AGE and in_entry_zone:
                 result['entry_status'] = (
                     f'✅ Entrada Vigente (Test hace {days_since_test}d, '
                     f'precio +{price_above_s1_pct*100:.1f}% sobre S1)'
@@ -1226,6 +1276,7 @@ class WyckoffSpringScreener:
                 'Market_Healthy':       an.get('market_healthy'),
                 'Market_Health_Score':  an.get('market_health_score'),
                 'Industry_Rank':        an.get('industry_rank'),
+                'Uptrend_Ok':           an.get('uptrend_ok'),
                 # Volume Profile y Soporte
                 'S1_Level':             an.get('s1_level'),
                 'POC_Level':            an.get('poc_level'),
