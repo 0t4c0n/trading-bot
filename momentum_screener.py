@@ -176,6 +176,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
         data["breakouts"].append({
             "rank": rank,
             "symbol": p['symbol'],
+            "name": p.get('name') or p['symbol'],
             "score": p.get('score'),
             "price": round(px, 2),
             "rs_rating": round(p['rs'], 1),
@@ -209,6 +210,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
         data["pullbacks"].append({
             "rank": rank,
             "symbol": p['symbol'],
+            "name": p.get('name') or p['symbol'],
             "price": round(p['entry'], 2),
             "rs_rating": round(p['rs'], 1),
             "mom6m": p['mom6m'],
@@ -279,6 +281,7 @@ def run_momentum_screener():
     # Adjuntar fundamentales + score y ORDENAR las rupturas por score (calidad de setup).
     for p in breakouts + pullbacks:
         e = enrich.get(p['symbol'], {})
+        p['name'] = e.get('name')
         p['sector'] = e.get('sector')
         p['margin'] = e.get('margin')
         p['revg'] = e.get('revg')

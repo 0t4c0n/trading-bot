@@ -194,7 +194,7 @@ class MarketData:
         import time as _t
         out = {}
         for s in symbols:
-            d = dict(is_crypto=(s in cls.KNOWN_CRYPTO_DIRECT), sector=None, margin=None,
+            d = dict(is_crypto=(s in cls.KNOWN_CRYPTO_DIRECT), name=None, sector=None, margin=None,
                      revg=None, epsg=None, rating=None, target=None, earnings_days=None,
                      enriched=False)
             for attempt in range(retries):
@@ -207,6 +207,7 @@ class MarketData:
                     summ = (info.get('longBusinessSummary', '') or '').lower()
                     if not d['is_crypto'] and any(k in summ for k in cls.CRYPTO_EXCLUDE_KEYWORDS):
                         d['is_crypto'] = True
+                    d['name'] = info.get('longName') or info.get('shortName')
                     d['sector'] = info.get('sector')
                     d['margin'] = info.get('profitMargins')
                     d['revg'] = info.get('revenueGrowth')
