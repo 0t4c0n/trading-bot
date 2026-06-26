@@ -24,6 +24,8 @@ from market_data import MarketData
 from momentum_strategy import evaluate_entry, evaluate_breakout, DEFAULTS
 
 MOM_LOOKBACK = DEFAULTS['mom_lookback']   # 126 sesiones (6 meses)
+MAX_BREAKOUTS = 6   # tope de la lista primaria (rápido de revisar; el resto en el CSV)
+MAX_PULLBACKS = 3   # tope de la lista secundaria
 
 
 def compute_rs_percentile(data, lookback=MOM_LOOKBACK):
@@ -142,8 +144,9 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
             "total_analyzed": n_universe,
             "leaders": n_leaders,
             "picks": len(breakouts),
-            "message": (f"{len(breakouts)} rupturas confirmadas + {len(pullbacks)} en pullback "
-                        f"(de {n_leaders} líderes / {n_universe} líquidas) | "
+            "message": (f"Top {min(len(breakouts), MAX_BREAKOUTS)} rupturas (de {len(breakouts)}) + "
+                        f"{min(len(pullbacks), MAX_PULLBACKS)} en pullback (de {len(pullbacks)}) | "
+                        f"{n_leaders} líderes / {n_universe} líquidas | "
                         f"Mercado {'alcista ✅' if market_healthy else 'bajista ⚠️ — a liquidez'}"),
         },
         "criteria": {
@@ -162,7 +165,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
         "breakouts": [],
         "pullbacks": [],
     }
-    for rank, p in enumerate(breakouts, 1):
+    for rank, p in enumerate(breakouts[:MAX_BREAKOUTS], 1):
         vr = p.get('vol_ratio', 1.0)
         vol_label = "confirma ✅" if vr >= 1.1 else ("flojo ⚠️" if vr < 0.9 else "neutro")
         ed = p.get('earnings_days')
@@ -200,7 +203,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
                      "Ruptura clara, aún sin retest — entrar a medias o esperar retest"),
             "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR",
         })
-    for rank, p in enumerate(pullbacks[:5], 1):
+    for rank, p in enumerate(pullbacks[:MAX_PULLBACKS], 1):
         data["pullbacks"].append({
             "rank": rank,
             "symbol": p['symbol'],
