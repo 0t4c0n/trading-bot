@@ -1,20 +1,20 @@
-# momentum_strategy.py — Generador de señales MOMENTUM / Fuerza relativa
+# momentum_strategy.py — Lógica de detección MOMENTUM / Fuerza relativa
 #
-# Filosofía Minervini/O'Neil: comprar LÍDERES (fuerza relativa alta, tendencia
-# alcista, cerca de máximos) en un punto de ENTRADA de BAJO RIESGO — el retroceso
-# a la MA50 en subida, donde el stop queda cerca. La salida (dejar correr con
-# trailing) la gestiona el motor de cartera.
+# Filosofía Minervini/O'Neil: cazar LÍDERES (fuerza relativa alta, tendencia alcista).
+# Dos formas de detección, ambas sin look-ahead:
+#   - evaluate_breakout (PRIMARIA, producción): ruptura confirmada del máximo previo
+#     que aguanta como soporte; stop bajo el nivel roto, riesgo ≤12%, fresca (r1m>0).
+#   - evaluate_entry (SECUNDARIA / backtest): rebote en la MA50 en subida (pullback).
 #
-# Produce señales [symbol, date, sl] compatibles con portfolio_backtest.py.
+# generate_momentum_signals produce señales [symbol, date, sl] para portfolio_backtest.py
+# y aplica liquidez point-in-time (mismo universo que producción).
 #
-# CONFIG RECOMENDADA en el motor de cartera (validada en backtest 2020-2025):
-#   market_filter_ma=200   -> IMPRESCINDIBLE: el momentum es beta pura; sin salir
-#                             a liquidez cuando el SPY pierde su MA200, el drawdown
-#                             se dispara a -40%. Con ella baja a ~-18%.
-#   trailing_pct=0.30-0.35 -> los líderes necesitan stops ANCHOS para no ser
-#                             sacudidos; con trailing ajustado el sistema se hunde.
-# Con esa config: CAGR ~15% vs SPY 14.6%, MaxDD ~-17% vs -34%, Sharpe ~0.9 vs 0.78.
-# (Caveat: sesgo de supervivencia → optimista; validar out-of-sample.)
+# NOTA sobre el backtest (config market_filter_ma=200 + trailing ~0.32):
+#   El momentum MECÁNICO no bate al SPY sobre universo real (CAGR ~+6/+11% vs +14.6%;
+#   las cifras viejas de "~15%, bate al índice" eran sesgo de supervivencia de un
+#   universo cherry-picked). Lo robusto: el filtro de mercado MA200 protege en bear
+#   (2022: capital intacto vs SPY −20%) y la liquidez es imprescindible. Por eso el
+#   uso real es un DETECTOR para revisión manual, no un robot. Ver README / memoria.
 
 import contextlib
 import io

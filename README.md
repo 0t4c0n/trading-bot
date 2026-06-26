@@ -1,64 +1,78 @@
-# 📈 Momentum Screener
+# 📈 Detector de Líderes — Ruptura Confirmada
 
-Sistema automatizado de **momentum / fuerza relativa** al estilo Minervini/O'Neil. Escanea diariamente el NYSE + NASDAQ buscando **líderes de mercado** (las acciones más fuertes) en un **punto de entrada de bajo riesgo**: el rebote en la media de 50 sesiones dentro de una tendencia alcista.
+Sistema automatizado que escanea diariamente NYSE + NASDAQ buscando **líderes de mercado** (las acciones más fuertes) que acaban de **romper su máximo previo y lo mantienen como soporte**. No es un robot de trading: es un **detector para revisión manual** — saca pocas candidatas de calidad para que tú mires el gráfico y decidas.
 
-El objetivo es **batir al índice** cabalgando a los grandes ganadores, controlando el riesgo con una entrada precisa y un filtro de mercado estricto.
+Pensado para **position trading**: detectar las pocas empresas excepcionales del año (las "futuras Micron/SanDisk"), entrar poco y **piramidar** si siguen subiendo.
 
 ## 📱 Dashboard
 
 `https://0t4c0n.github.io/trading-bot/`
 
-## 🎯 Filosofía de la estrategia
+## 🎯 Filosofía
 
-> Comprar **líderes fuertes** en el retroceso a una media móvil en subida, y **dejar correr** a los ganadores con un trailing stop. Pocas operaciones, pero las ganadoras corren mucho.
+> Comprar **fuerza confirmada**, no adivinar suelos. Una ruptura que ha superado su resistencia y la testea como soporte da una entrada con **stop natural ceñido** (bajo el nivel roto). Pocas candidatas, revisadas a mano, dejando correr a las ganadoras.
 
 - **Temporalidad**: gráfico diario (1D)
-- **Universo**: NYSE + NASDAQ (solo acciones comunes/ADRs; sin bonos, preferentes, CEF ni SPACs)
-- **Frecuencia**: ejecución automática diaria
-- **Resultado**: lista de líderes en pullback operables hoy, con entrada, stop y guía de salida
+- **Universo**: NYSE + NASDAQ, solo acciones **líquidas** (sin microcaps/chicharros)
+- **Frecuencia**: ejecución automática diaria (solo en mercado alcista)
+- **Salida del screener**: **top 6 rupturas** + **top 3 pullback**, ordenadas por un score de calidad
 
 ---
 
 ## 🧠 Metodología
 
 ### 1. Filtro de mercado (eliminatorio)
-**Solo se opera si el S&P 500 está sobre su MA200.** En mercado bajista NO se generan picks (a liquidez). El momentum es beta pura: operar en bear dispara el drawdown. El backtest lo confirma — con este filtro el drawdown baja de ~−40% a ~−18%.
+**Solo se busca si el S&P 500 está sobre su MA200.** En mercado bajista NO se generan candidatos. El momentum es beta pura: el backtest confirma que sin salir a liquidez en bear el drawdown se dispara.
 
-### 2. Selección — líderes por fuerza relativa
-Una acción es candidata si:
-- **RS top 20%**: su retorno a 6 meses está en el percentil ≥80 del universo
-- **Tendencia alcista**: `precio > MA50 > MA200`, con MA50 y MA200 al alza
-- **Cerca de máximos**: dentro del 25% de su máximo de 52 semanas
+### 2. Filtro de liquidez (calidad institucional)
+Antes de nada, el universo se recorta a nombres líquidos: **dólar-volumen mediano ≥ $20M/día** y **precio ≥ $10**. Esto elimina microcaps y chicharros que, por su volatilidad, contaminaban el ranking de fuerza relativa.
 
-### 3. Entrada — rebote en MA50 (bajo riesgo)
-El mejor punto de entrada según el estudio (CAGR 13.8%, Sharpe 0.86 vs MA20/MA10/ruptura):
-- El precio **retrocede y toca la MA50** en subida (mínimo reciente cerca de la MA50)
-- **Rebota**: cierra de nuevo sobre la MA50 y gira al alza
-
-Entrar en el pullback deja el **stop cerca**, así que el riesgo por operación es pequeño aunque la acción sea fuerte.
+### 3. Lista PRIMARIA — ruptura confirmada
+Una acción entra si cumple **todo**:
+- **RS top 10%** (percentil ≥90 del retorno a 6 meses sobre el universo líquido)
+- **Tendencia alcista**: `precio > MA50 > MA200`, con ambas medias al alza
+- **Ruptura**: ha superado su **máximo previo de 52s** (calculado excluyendo las últimas ~25 sesiones = la resistencia que tenía que romper)
+- **El nivel aguanta como soporte**: los mínimos recientes no han vuelto a perder el nivel roto (acepta tanto las ya retesteadas como las que solo lo superaron con claridad)
+- **Fresca**: el último mes (r1m) sigue subiendo → descarta rupturas viejas ya girándose
+- **Rentable**: se descartan empresas con margen neto ≤ 0
+- **No cripto-directo**: fuera mineras de bitcoin, tesorerías cripto y exchanges (volátiles y con riesgo regulatorio); se mantienen las de tecnología blockchain
 
 ### 4. Stop y riesgo
-- **Stop Loss** = mínimo del retroceso − 0.5×ATR(14)
-- Se descartan entradas con **riesgo > 12%**
+- **Stop Loss** = nivel roto (ahora soporte) − 0.5×ATR(14)
+- Se descartan entradas con **riesgo > 12%** (esto mismo elimina las rupturas ya extendidas)
 
-### 5. Salida — dejar correr (gestión manual)
-La salida la gestionas tú con un **trailing stop ~32% bajo el máximo alcanzado**. El backtest mostró que vender en un objetivo fijo capa los runners; dejar correr multiplica ×2.7 la rentabilidad agregada y captura los grandes movimientos.
+### 5. Ranking — score de calidad 0-100
+Las rupturas se ordenan por un score **transparente** (no predice ganadores; ordena calidad de setup para tu triaje):
+
+| Componente | Peso |
+|---|---|
+| Fuerza relativa (RS) | 25 |
+| Fundamental (rentable + crecimiento ventas/EPS) | 20 |
+| Volumen en la ruptura (vol 10/50) | 15 |
+| Momentum 6m | 10 |
+| Retest confirmado | 10 |
+| Entrada de bajo riesgo | 10 |
+| Frescura (r1m) | 10 |
+
+Cada candidata se enriquece con datos de yfinance (sector, margen, crecimiento, recomendación de analistas, precio objetivo y **aviso de earnings ≤7 días**).
+
+### 6. Lista SECUNDARIA — pullback a MA50
+Como apoyo, los líderes (RS top 20%) en rebote sobre la MA50 en subida (entrada de bajo riesgo clásica).
+
+### 7. Salida — dejar correr (gestión manual)
+La gestionas tú con un trailing stop ancho (~32% bajo el máximo). Empezar poco y piramidar si la acción sigue subiendo.
 
 ---
 
-## 📊 Resultados del backtest (cartera, 2020–2025)
+## 📊 ¿Bate al índice? — la verdad honesta
 
-Universo ~2.500 acciones, simulación de cartera realista (tamaño por riesgo, salida de mercado, trailing 32%):
+**No, el momentum mecánico no bate al SPY sobre el universo real.** Un backtest de cartera riguroso (universo amplio por capitalización, liquidez point-in-time, 2019-2025) da **CAGR ~+6% base / ~+11% afinado vs +14.6% del SPY**. Las cifras optimistas de versiones antiguas venían de un universo cherry-picked de supervivientes.
 
-| | Estrategia | SPY (comprar y mantener) |
-|---|---|---|
-| **CAGR** | ~15% | 14.6% |
-| **Max Drawdown** | **~−17%** | −34% |
-| **Sharpe** | **~0.9** | 0.78 |
+Lo único robusto del backtest: (1) el **filtro de liquidez** era imprescindible; (2) el **filtro de mercado (MA200)** protege de verdad en bear (2022 verificado: capital intacto vs SPY −20%).
 
-**Bate al índice en bruto y en riesgo-ajustado, con la mitad de drawdown.**
+**Por eso esto NO es un robot, es un detector.** El valor está en tu criterio sobre las pocas candidatas limpias que el filtro deja, no en operar una cesta mecánica. Se usa para el ~10% de la cartera; el resto, indexado.
 
-> ⚠️ **Caveat honesto**: el backtest tiene sesgo de supervivencia (universo actual, sin acciones quebradas) → resultados optimistas. Es un solo periodo. Antes de operar con dinero real conviene validación out-of-sample.
+> ⚠️ Persiste sesgo de supervivencia (listados actuales, sin delisted) → backtest aún optimista.
 
 ---
 
@@ -66,11 +80,11 @@ Universo ~2.500 acciones, simulación de cartera realista (tamaño por riesgo, s
 
 | Archivo | Función |
 |---|---|
-| `momentum_screener.py` | **Screener diario de producción** (universo → RS → filtro mercado → picks → `docs/data.json`) |
-| `momentum_strategy.py` | Lógica de selección + entrada (compartida entre backtest y producción) |
-| `market_data.py` | Infraestructura de datos (universo, descarga, salud de mercado) |
+| `momentum_screener.py` | **Screener diario** (universo → liquidez → RS → rupturas + pullback → score → `docs/data.json`) |
+| `momentum_strategy.py` | Lógica de detección: `evaluate_breakout` (ruptura), `evaluate_entry` (pullback), `DEFAULTS` |
+| `market_data.py` | Datos: universo, descarga, salud de mercado, liquidez, enriquecimiento yfinance (cripto/fundamentales) |
 | `portfolio_backtest.py` | Motor de backtest de cartera reutilizable (CAGR, drawdown, Sharpe, vs SPY) |
-| `run_portfolio_demo.py` | Pipeline completo de backtest (descarga → señales → cartera → informe) |
+| `run_portfolio_demo.py` | Pipeline de backtest (universo amplio por capitalización → señales → cartera → informe) |
 | `docs/index.html` | Dashboard web (responsive móvil) |
 | `.github/workflows/daily-trading-analysis.yml` | Ejecución diaria automática |
 
@@ -78,25 +92,18 @@ Universo ~2.500 acciones, simulación de cartera realista (tamaño por riesgo, s
 
 ## 🚀 Uso
 
-### Screener diario (producción)
 ```bash
 pip install -r requirements.txt
-python momentum_screener.py        # genera docs/data.json con los picks de hoy
-open docs/index.html               # abre el dashboard local
+python momentum_screener.py        # genera docs/data.json (top 6 rupturas + top 3 pullback)
+open docs/index.html               # dashboard local
+
+# Backtest (validación honesta sobre universo amplio)
+python run_portfolio_demo.py            # universo amplio por capitalización
+python run_portfolio_demo.py --demo     # universo demo (~60 nombres)
+python run_portfolio_demo.py --quick    # validación rápida del pipeline
 ```
 
-### Backtest de cartera
-```bash
-python run_portfolio_demo.py          # backtest sobre universo demo
-python run_portfolio_demo.py --quick  # validación rápida del pipeline
-```
-
-### Probar una nueva estrategia
-El motor de cartera está **desacoplado**: genera tus señales en formato
-`[symbol, date, sl]` y pásalas a `run_portfolio_backtest()` (ver `portfolio_backtest.py`).
-
-### CI/CD (GitHub Actions)
-Se ejecuta automáticamente cada día laborable, genera los picks y despliega a GitHub Pages.
+Probar otra estrategia: el motor de cartera está **desacoplado** — genera señales `[symbol, date, sl]` y pásalas a `run_portfolio_backtest()`.
 
 ---
 
@@ -104,32 +111,25 @@ Se ejecuta automáticamente cada día laborable, genera los picks y despliega a 
 
 ```json
 {
-  "strategy": "Momentum / Fuerza Relativa (líderes + pullback MA50)",
-  "market_context": {
-    "healthy": true,
-    "status_label": "ALCISTA ✅ — se opera"
-  },
-  "summary": {
-    "total_analyzed": 4200,
-    "leaders": 508,
-    "picks": 12
-  },
-  "top_picks": [
+  "strategy": "Detector de líderes — ruptura de máximos confirmada (position trading)",
+  "market_context": { "healthy": true, "status_label": "ALCISTA ✅ — se busca" },
+  "summary": { "total_analyzed": 1655, "leaders": 330, "picks": 6 },
+  "breakouts": [
     {
-      "rank": 1,
-      "symbol": "XYZ",
-      "price": 131.60,
-      "relative_strength": { "rs_rating": 93, "label": "Líder" },
-      "trend": { "ma50": 120.28, "ma200": 98.40, "pct_from_52w_high": -12 },
-      "risk_management": {
-        "entry_price": 131.60,
-        "sl": 117.88,
-        "risk_pct": 10.4,
-        "trailing_stop_pct": 32,
-        "exit_strategy": "Dejar correr: trailing stop 32% bajo el máximo"
-      }
+      "rank": 1, "symbol": "XYZ", "score": 78.8, "price": 100.0,
+      "rs_rating": 95, "mom6m": 120, "r1m": 8, "retested": true,
+      "breakout_level": 94.0, "pct_above_breakout": 6.4, "pct_from_52w_high": -2,
+      "sl": 92.0, "risk_pct": 8.0,
+      "volume": { "ratio_10_50": 1.3, "label": "confirma ✅" }, "rsi": 62,
+      "sector": "Technology",
+      "fundamentals": {
+        "profit_margin_pct": 18, "rev_growth_pct": 25, "eps_growth_pct": 40,
+        "analyst_rating": "strong_buy", "target_upside_pct": 20
+      },
+      "earnings_flag": "⚠️ resultados en 3 días"
     }
-  ]
+  ],
+  "pullbacks": [ { "rank": 1, "symbol": "ABC", "rs_rating": 92, "...": "..." } ]
 }
 ```
 
@@ -137,4 +137,4 @@ Se ejecuta automáticamente cada día laborable, genera los picks y despliega a 
 
 ## ⚠️ Disclaimer
 
-Herramienta de análisis técnico **educativa**, no constituye recomendación de inversión. El trading implica riesgo de pérdida total. Verifica siempre los setups manualmente antes de operar.
+Herramienta de análisis técnico **educativa**, no constituye recomendación de inversión. Las candidatas son puntos de partida para tu revisión manual, no compras automáticas. El trading implica riesgo de pérdida total. Verifica siempre los setups manualmente antes de operar.

@@ -1,16 +1,18 @@
-# momentum_screener.py — Screener diario de MOMENTUM (producción)
+# momentum_screener.py — Detector diario de líderes (producción)
 #
-# Estrategia (validada por backtest, ver memoria/commits):
-#   - SOLO opera en mercado alcista (SPY > MA200). En bear: 0 picks, a liquidez.
-#   - Selección: LÍDERES por fuerza relativa (RS top 20%) en tendencia alcista
-#     (px > MA50 > MA200, ambas subiendo) y cerca de máximos de 52 semanas.
-#   - Entrada de BAJO RIESGO: rebote en la MA50 en subida (stop bajo el mínimo
-#     del retroceso − 0.5·ATR). El mejor punto de entrada según el estudio.
+# Flujo:
+#   - SOLO busca en mercado alcista (SPY > MA200). En bear: 0 candidatos, a liquidez.
+#   - Filtra el universo a nombres LÍQUIDOS (dólar-vol mediano ≥$20M, precio ≥$10).
+#   - Calcula la fuerza relativa (RS) sobre ese universo líquido.
+#   - Lista PRIMARIA (find_breakouts → evaluate_breakout): RS top 10% con RUPTURA
+#     confirmada del máximo previo que aguanta como soporte; stop bajo el nivel roto,
+#     riesgo ≤12%, fresca (r1m>0). Enriquece con yfinance (cripto/fundamentales/sector/
+#     earnings), descarta cripto-directo y no rentables, y ORDENA por un score 0-100.
+#   - Lista SECUNDARIA (find_momentum_picks → evaluate_entry): pullback a la MA50.
 #   - Salida (gestión manual): dejar correr con trailing stop ~32% bajo el máximo.
 #
-# Usa la MISMA lógica de entrada que el backtest (momentum_strategy.evaluate_entry)
-# para que producción y backtest operen idénticamente. Reutiliza la infraestructura
-# de datos del screener anterior (universo, descarga, salud de mercado).
+# Genera docs/data.json con top MAX_BREAKOUTS rupturas + top MAX_PULLBACKS pullback.
+# Es un DETECTOR para revisión manual (position trading), no un robot — ver README.
 
 import json
 import os

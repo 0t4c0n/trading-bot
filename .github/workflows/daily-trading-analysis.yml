@@ -47,12 +47,12 @@ jobs:
         pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Ejecutar screener de Momentum
+    - name: Ejecutar detector de líderes
       run: |
-        echo "=== MOMENTUM SCREENER ==="
-        echo "Estrategia: Líderes (fuerza relativa) + pullback a MA50"
-        echo "Filtro de mercado: SOLO opera si SPY > MA200"
-        echo "Salida: dejar correr con trailing stop (gestión manual)"
+        echo "=== DETECTOR DE LÍDERES (ruptura confirmada) ==="
+        echo "Primaria: RS top 10% + ruptura del máximo previo que aguanta como soporte"
+        echo "Secundaria: pullback a MA50 | Filtro: SOLO si SPY > MA200, solo líquidas"
+        echo "Salida: top 6 rupturas + top 3 pullback (revisión manual / position trading)"
         echo "Universo: NYSE + NASDAQ"
         python momentum_screener.py
       env:
