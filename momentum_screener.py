@@ -14,6 +14,7 @@
 
 import json
 import os
+import time
 from datetime import datetime
 
 import numpy as np
@@ -66,6 +67,15 @@ def find_momentum_picks(data, rs_ratings, market_healthy):
     return picks
 
 
+def _rsi(c, n=14):
+    d = np.diff(c)
+    up = np.clip(d, 0, None)
+    dn = -np.clip(d, None, 0)
+    ru = pd.Series(up).ewm(alpha=1 / n, adjust=False).mean().iloc[-1]
+    rd = pd.Series(dn).ewm(alpha=1 / n, adjust=False).mean().iloc[-1]
+    return 100.0 if rd == 0 else float(100 - 100 / (1 + ru / rd))
+
+
 def find_breakouts(data, rs_ratings, market_healthy):
     """Lista PRIMARIA: líderes con RUPTURA confirmada de su resistencia (máximo previo),
     que la mantienen como soporte, con stop natural ≤12% bajo el nivel roto. Position
@@ -78,6 +88,7 @@ def find_breakouts(data, rs_ratings, market_healthy):
             c = df['Close'].values.astype(float)
             h = df['High'].values.astype(float)
             l = df['Low'].values.astype(float)
+            v = df['Volume'].values.astype(float)
         except Exception:
             continue
         i = len(c) - 1
@@ -85,11 +96,33 @@ def find_breakouts(data, rs_ratings, market_healthy):
         if sig is None:
             continue
         mom6m = (c[i] / c[i - MOM_LOOKBACK] - 1) * 100 if c[i - MOM_LOOKBACK] > 0 else 0.0
-        out.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), mom6m=round(mom6m, 1), **sig))
-    # Ranking: primero las que ya retestearon (entrada de menor riesgo) y, dentro de
-    # cada grupo, por fuerza relativa. Tú eliges a mano dentro de las que salgan.
-    out.sort(key=lambda x: (not x['retested'], -x['rs']))
-    return out
+        # Volumen: media 10 sesiones / media 50 → >1 = la ruptura sube con interés.
+        vol_ratio = (v[-10:].mean() / v[-50:].mean()) if len(v) >= 50 and v[-50:].mean() > 0 else 1.0
+        out.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), mom6m=round(mom6m, 1),
+                        vol_ratio=round(float(vol_ratio), 2), rsi=round(_rsi(c), 0), **sig))
+    return out   # el orden definitivo (por score) se asigna en run, con los fundamentales
+
+
+def _clip01(x):
+    return max(0.0, min(1.0, x))
+
+
+def score_breakout(p):
+    """Score 0-100 TRANSPARENTE para ordenar (no predice ganadores: ordena calidad de
+    setup + convicción + fundamental para el triaje manual). Pesos: RS 25, fundamental
+    20, volumen 15, momentum 10, retest 10, entrada/riesgo 10, frescura r1m 10."""
+    rs = _clip01((p['rs'] - 80) / 20)                       # RS 80→0, 100→1
+    mom = _clip01(p['mom6m'] / 150)                          # momentum 6m, cap 150%
+    vol = _clip01((p.get('vol_ratio', 1.0) - 0.8) / 0.6)    # vol10/50: 0.8→0, 1.4→1
+    rete = 1.0 if p['retested'] else 0.0
+    entry = _clip01((DEFAULTS['max_risk_pct'] * 100 - p['risk_pct']) / (DEFAULTS['max_risk_pct'] * 100))
+    fresh = _clip01(p.get('r1m', 0) / 10)                    # r1m ≥10% → 1
+    margin, revg, epsg = p.get('margin'), p.get('revg'), p.get('epsg')
+    f_prof = 1.0 if (margin is not None and margin > 0) else (0.5 if margin is None else 0.0)
+    f_rev = _clip01((revg or 0) / 0.30) if revg is not None else 0.5
+    f_eps = _clip01((epsg or 0) / 0.50) if epsg is not None else 0.5
+    fund = f_prof * 0.5 + f_rev * 0.25 + f_eps * 0.25
+    return round(25 * rs + 10 * mom + 15 * vol + 10 * rete + 10 * entry + 10 * fresh + 20 * fund, 1)
 
 
 def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_universe, n_leaders):
@@ -130,12 +163,19 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
         "pullbacks": [],
     }
     for rank, p in enumerate(breakouts, 1):
+        vr = p.get('vol_ratio', 1.0)
+        vol_label = "confirma ✅" if vr >= 1.1 else ("flojo ⚠️" if vr < 0.9 else "neutro")
+        ed = p.get('earnings_days')
+        earnings_flag = (f"⚠️ resultados en {ed} días" if ed is not None and 0 <= ed <= 7 else None)
+        tgt, px = p.get('target'), p['entry']
         data["breakouts"].append({
             "rank": rank,
             "symbol": p['symbol'],
-            "price": round(p['entry'], 2),
+            "score": p.get('score'),
+            "price": round(px, 2),
             "rs_rating": round(p['rs'], 1),
             "mom6m": p['mom6m'],
+            "r1m": p.get('r1m'),
             "retested": p['retested'],
             "breakout_level": p['breakout_level'],
             "pct_above_breakout": p['pct_above_breakout'],
@@ -144,6 +184,17 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
             "ma200": p['ma200'],
             "sl": p['sl'],
             "risk_pct": p['risk_pct'],
+            "volume": {"ratio_10_50": vr, "label": vol_label},
+            "rsi": p.get('rsi'),
+            "sector": p.get('sector') or "—",
+            "fundamentals": {
+                "profit_margin_pct": round(p['margin'] * 100, 1) if p.get('margin') is not None else None,
+                "rev_growth_pct": round(p['revg'] * 100, 0) if p.get('revg') is not None else None,
+                "eps_growth_pct": round(p['epsg'] * 100, 0) if p.get('epsg') is not None else None,
+                "analyst_rating": p.get('rating'),
+                "target_upside_pct": round((tgt / px - 1) * 100, 0) if tgt else None,
+            },
+            "earnings_flag": earnings_flag,
             "note": ("Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)"
                      if p['retested'] else
                      "Ruptura clara, aún sin retest — entrar a medias o esperar retest"),
@@ -194,15 +245,45 @@ def run_momentum_screener():
     breakouts = find_breakouts(data, rs, market_healthy)
     pullbacks = find_momentum_picks(data, rs, market_healthy)
 
-    # Excluir cripto-DIRECTO (mineras / tesorerías bitcoin / exchanges): muy volátil y con
-    # riesgo regulatorio. Se mantienen las de tecnología blockchain. Solo se consulta la
-    # descripción de los candidatos finales (barato), no de todo el universo.
-    cand = {p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks}
-    crypto = md.crypto_direct_symbols(cand) if cand else set()
+    # Enriquecer SOLO los candidatos finales con yfinance (una llamada por símbolo):
+    # cripto-directo, sector, margen, crecimiento, recomendación, objetivo y earnings.
+    cand = sorted({p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks})
+    if cand:
+        time.sleep(15)   # dejar respirar a Yahoo tras la descarga masiva antes de pedir .info
+    enrich = md.enrich_candidates(cand) if cand else {}
+
+    def keep(p):
+        e = enrich.get(p['symbol'], {})
+        if e.get('is_crypto'):
+            return False                         # fuera cripto-directo (mineras, etc.)
+        m = e.get('margin')
+        if m is not None and m <= 0:             # gate fundamental: fuera no rentables
+            return False
+        return True
+
+    crypto = sorted(s for s, e in enrich.items() if e.get('is_crypto'))
+    unprof = sorted(s for s, e in enrich.items()
+                    if not e.get('is_crypto') and e.get('margin') is not None and e['margin'] <= 0)
+    breakouts = [p for p in breakouts if keep(p)]
+    pullbacks = [p for p in pullbacks if keep(p)]
     if crypto:
-        breakouts = [p for p in breakouts if p['symbol'] not in crypto]
-        pullbacks = [p for p in pullbacks if p['symbol'] not in crypto]
-        print(f"Excluidas cripto-directo: {sorted(crypto)}")
+        print(f"Excluidas cripto-directo: {crypto}")
+    if unprof:
+        print(f"Excluidas no rentables: {unprof}")
+
+    # Adjuntar fundamentales + score y ORDENAR las rupturas por score (calidad de setup).
+    for p in breakouts + pullbacks:
+        e = enrich.get(p['symbol'], {})
+        p['sector'] = e.get('sector')
+        p['margin'] = e.get('margin')
+        p['revg'] = e.get('revg')
+        p['epsg'] = e.get('epsg')
+        p['rating'] = e.get('rating')
+        p['target'] = e.get('target')
+        p['earnings_days'] = e.get('earnings_days')
+    for p in breakouts:
+        p['score'] = score_breakout(p)
+    breakouts.sort(key=lambda x: -x['score'])
 
     print(f"Líderes (RS≥{DEFAULTS['rs_min']}): {n_leaders} | "
           f"Rupturas confirmadas (RS≥{DEFAULTS['breakout_rs_min']}): {len(breakouts)} | "
@@ -221,11 +302,11 @@ def run_momentum_screener():
     with open('docs/last_update.txt', 'w') as f:
         f.write(datetime.now().isoformat())
     print(f"✅ Dashboard actualizado: docs/data.json ({len(breakouts)} rupturas)")
-    for p in breakouts[:10]:
+    for p in breakouts[:12]:
         tag = "retest✓" if p['retested'] else "sin retest"
-        print(f"  {p['symbol']:<6} RS={p['rs']:.0f}  px={p['entry']:.2f}  "
-              f"ruptura={p['breakout_level']:.2f} (+{p['pct_above_breakout']:.1f}%)  "
-              f"SL={p['sl']:.2f}  riesgo={p['risk_pct']:.1f}%  {tag}")
+        print(f"  score={p['score']:5.1f}  {p['symbol']:<6} RS={p['rs']:.0f}  "
+              f"mom6m={p['mom6m']:.0f}%  vol={p['vol_ratio']:.2f}  riesgo={p['risk_pct']:.1f}%  "
+              f"r1m={p.get('r1m',0):.0f}%  {p.get('sector') or '—':<14} {tag}")
     return breakouts
 
 

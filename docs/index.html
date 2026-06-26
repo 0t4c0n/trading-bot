@@ -441,27 +441,39 @@
 
     function renderBreakout(p) {
         const rsClass = (p.rs_rating >= 90) ? 'test-active' : '';
+        const f = p.fundamentals || {};
+        const vol = p.volume || {};
+        const up = (f.target_upside_pct !== null && f.target_upside_pct !== undefined)
+            ? (f.target_upside_pct >= 0 ? '+' : '') + fmt(f.target_upside_pct, 0) + '%' : '—';
+        const earnings = p.earnings_flag ? `<div class="status-badge" style="background:#5a3a00;color:#ffd479;">${p.earnings_flag}</div>` : '';
         return `
             <div class="pick-card ${rsClass}">
                 <div class="pick-header">
                     <div>
                         <span class="pick-rank">#${p.rank}</span>
                         <span class="pick-symbol">${p.symbol}</span>
-                        <div class="pick-company">RS ${fmt(p.rs_rating, 0)}/100 · momentum 6m ${fmt(p.mom6m, 0)}%</div>
+                        <div class="pick-company">${p.sector || '—'} · RS ${fmt(p.rs_rating, 0)} · mom 6m ${fmt(p.mom6m, 0)}%</div>
                     </div>
-                    <div>
+                    <div style="text-align:right;">
                         <div class="pick-price">${fmtPrice(p.price)}</div>
-                        <div class="pick-sector">${fmt(p.pct_from_52w_high, 0)}% del máx 52s</div>
+                        <div class="pick-sector">Score <b>${fmt(p.score, 0)}</b>/100 · ${fmt(p.pct_from_52w_high, 0)}% del máx</div>
                     </div>
                 </div>
 
                 <div class="status-badge ${p.retested ? 'test-active' : ''}">${p.retested ? '🟢 Retest OK — soporte confirmado' : '🟡 Ruptura clara, sin retest aún'}</div>
+                ${earnings}
 
                 <div class="section-subtitle">Ruptura</div>
                 <div class="detail-row"><span class="k">Nivel roto (resistencia → soporte)</span><span class="v">${fmtPrice(p.breakout_level)}</span></div>
                 <div class="detail-row"><span class="k">Precio sobre la ruptura</span><span class="v">+${fmt(p.pct_above_breakout, 1)}%</span></div>
-                <div class="detail-row"><span class="k">MA50</span><span class="v">${fmtPrice(p.ma50)}</span></div>
-                <div class="detail-row"><span class="k">MA200 (tendencia de fondo)</span><span class="v">${fmtPrice(p.ma200)}</span></div>
+                <div class="detail-row"><span class="k">Último mes (r1m)</span><span class="v">${fmt(p.r1m, 0)}%</span></div>
+                <div class="detail-row"><span class="k">Volumen ruptura (10/50)</span><span class="v">${fmt(vol.ratio_10_50, 2)}× · ${vol.label || '—'}</span></div>
+                <div class="detail-row"><span class="k">RSI(14)</span><span class="v">${fmt(p.rsi, 0)}</span></div>
+
+                <div class="section-subtitle">Fundamental</div>
+                <div class="detail-row"><span class="k">Margen neto</span><span class="v">${f.profit_margin_pct !== null && f.profit_margin_pct !== undefined ? fmt(f.profit_margin_pct,0)+'%' : '—'}</span></div>
+                <div class="detail-row"><span class="k">Crecim. ventas / EPS</span><span class="v">${f.rev_growth_pct ?? '—'}% / ${f.eps_growth_pct ?? '—'}%</span></div>
+                <div class="detail-row"><span class="k">Analistas (rating · objetivo)</span><span class="v">${f.analyst_rating || '—'} · ${up}</span></div>
 
                 <div class="section-subtitle">Gestión de riesgo</div>
                 <div class="risk-grid">

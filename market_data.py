@@ -182,23 +182,48 @@ class MarketData:
     )
 
     @classmethod
-    def crypto_direct_symbols(cls, symbols):
-        """Subconjunto de `symbols` cuyo negocio es DIRECTAMENTE cripto/bitcoin (mineras,
-        tesorerías bitcoin, exchanges). Combina la lista conocida + detección por la
-        descripción de negocio de yfinance (así caza mineras nuevas automáticamente). Las
-        de tecnología blockchain 'normal' no disparan estas palabras clave. Ante fallo de
-        red, no descarta (la revisión manual lo vería)."""
-        out = set()
+    def enrich_candidates(cls, symbols, retries=5, pause=0.6):
+        """Consulta yfinance .info por candidato (solo ~decenas) para lo que el código no
+        calcula: cripto-directo, sector, margen neto, crecimiento ventas/EPS, recomendación,
+        objetivo y días al próximo resultado. dict[sym] -> dict(...).
+
+        yfinance .info es FRÁGIL en lote (Yahoo lo throttlea tras descargas pesadas y
+        devuelve vacío): por eso reintenta con backoff y pausa entre símbolos, y detecta
+        respuestas vacías. Si aun así falla, deja los campos a None y marca enriched=False
+        (el screener degrada con elegancia: no filtra por fundamental ni avisa de sector)."""
+        import time as _t
+        out = {}
         for s in symbols:
-            if s in cls.KNOWN_CRYPTO_DIRECT:
-                out.add(s)
-                continue
-            try:
-                summ = (yf.Ticker(s).info.get('longBusinessSummary', '') or '').lower()
-            except Exception:
-                continue
-            if any(k in summ for k in cls.CRYPTO_EXCLUDE_KEYWORDS):
-                out.add(s)
+            d = dict(is_crypto=(s in cls.KNOWN_CRYPTO_DIRECT), sector=None, margin=None,
+                     revg=None, epsg=None, rating=None, target=None, earnings_days=None,
+                     enriched=False)
+            for attempt in range(retries):
+                try:
+                    info = yf.Ticker(s).info or {}
+                    # respuesta útil: debe traer al menos sector o un fundamental o la descripción
+                    if not any(info.get(k) for k in
+                               ('sector', 'profitMargins', 'longBusinessSummary', 'longName')):
+                        raise ValueError('info vacío (throttle)')
+                    summ = (info.get('longBusinessSummary', '') or '').lower()
+                    if not d['is_crypto'] and any(k in summ for k in cls.CRYPTO_EXCLUDE_KEYWORDS):
+                        d['is_crypto'] = True
+                    d['sector'] = info.get('sector')
+                    d['margin'] = info.get('profitMargins')
+                    d['revg'] = info.get('revenueGrowth')
+                    d['epsg'] = info.get('earningsGrowth') or info.get('earningsQuarterlyGrowth')
+                    d['rating'] = info.get('recommendationKey')
+                    d['target'] = info.get('targetMeanPrice')
+                    ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
+                    if ts:
+                        d['earnings_days'] = int((ts - _t.time()) // 86400)
+                    d['enriched'] = True
+                    break
+                except Exception:
+                    _t.sleep(pause * (2 ** attempt))   # backoff: 0.5, 1, 2, 4 s
+            out[s] = d
+            _t.sleep(pause)                            # pausa cortés entre símbolos
+        n_ok = sum(1 for v in out.values() if v['enriched'])
+        print(f"  Enriquecidos {n_ok}/{len(out)} candidatos (yfinance .info)")
         return out
 
     # --- Salud del mercado ---

@@ -54,6 +54,9 @@ DEFAULTS = dict(
     prior_high_exclude=25,      # sesiones recientes excluidas del máximo 52s → "resistencia previa"
     breakout_hold_window=5,     # las últimas N sesiones deben aguantar sobre el nivel roto
     retest_margin=0.04,         # si el mínimo reciente volvió a ≤4% del nivel roto → "retest OK"
+    breakout_min_r1m=0.0,       # FRESCURA: el último mes (21 sesiones) debe seguir subiendo
+                                # (>0). Descarta rupturas viejas que ya hicieron techo y se
+                                # giran, sin penalizar a las que corrigieron y rebotan.
 )
 
 
@@ -156,6 +159,11 @@ def evaluate_breakout(c, h, l, i, rs_val, params=None):
     if risk <= 0 or risk > p['max_risk_pct']:
         return None
 
+    # Frescura: que el último mes siga subiendo (no una ruptura vieja ya girándose).
+    r1m = (c[i] / c[i - 21] - 1) if i >= 21 and c[i - 21] > 0 else 0.0
+    if r1m <= p['breakout_min_r1m']:
+        return None
+
     hi52 = h[i - 252:i].max()
     retested = recent_low <= prior_high * (1 + p['retest_margin'])
     return dict(signal=True, entry=float(px), sl=round(float(sl), 4),
@@ -165,6 +173,7 @@ def evaluate_breakout(c, h, l, i, rs_val, params=None):
                 ma50=round(float(ma50), 2), ma200=round(float(ma200), 2),
                 hi52=round(float(hi52), 2),
                 pct_from_high=round((px / hi52 - 1) * 100, 1),
+                r1m=round(float(r1m) * 100, 1),
                 retested=bool(retested))
 
 
