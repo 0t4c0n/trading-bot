@@ -139,6 +139,30 @@ class MarketData:
             print(f"⚠️ Error ^GSPC: {e}")
         return all_data
 
+    # --- Filtro de liquidez (calidad institucional) ---
+    @staticmethod
+    def liquid_symbols(data, min_dollar_vol=20_000_000, min_price=10.0, window=50):
+        """Devuelve los símbolos con liquidez institucional: dólar-volumen MEDIANO
+        de las últimas `window` sesiones ≥ min_dollar_vol y precio ≥ min_price.
+
+        Es el filtro que faltaba: sin él, microcaps y chicharros (biotechs que se
+        disparan con UNA noticia, etc.) inflan el percentil de fuerza relativa con
+        'pops' irrepetibles y desplazan a los líderes reales (Micron, SanDisk, ADI...).
+        Se usa la MEDIANA del dólar-volumen (no la media) para que un único día de
+        volumen anómalo no cuele a un valor ilíquido.
+        """
+        keep = []
+        for s, df in data.items():
+            if 'Volume' not in df.columns or len(df) < window:
+                continue
+            c = df['Close'].astype(float)
+            v = df['Volume'].astype(float)
+            price = float(c.iloc[-1])
+            dollar_vol = float((c.iloc[-window:] * v.iloc[-window:]).median())
+            if price >= min_price and dollar_vol >= min_dollar_vol:
+                keep.append(s)
+        return keep
+
     # --- Salud del mercado ---
     def check_market_health(self, spy_df):
         """¿Mercado alcista? (SPY sobre MA200). Devuelve (healthy: bool, score 0-15)."""

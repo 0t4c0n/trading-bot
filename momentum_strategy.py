@@ -39,6 +39,21 @@ DEFAULTS = dict(
     cooldown=15,              # no re-señalar el mismo símbolo en N sesiones
     min_history=260,
     trailing_stop_pct=32.0,   # salida recomendada (gestión manual): trailing % bajo el pico
+    # --- Filtro de liquidez (institucional) — ÚNICA fuente del umbral ---
+    # Se aplica IGUAL en producción (screener, sobre la última barra) y en el backtest
+    # (point-in-time en cada rebalanceo) para que ambos operen el MISMO universo.
+    min_dollar_vol=20_000_000,  # dólar-volumen MEDIANO mínimo (≈ $20M/día)
+    min_price=10.0,             # precio mínimo (fuera chicharros)
+    liq_window=50,              # sesiones para la mediana del dólar-volumen
+    # --- Detector de RUPTURA confirmada (lista PRIMARIA del screener) ---
+    # Caza líderes que han SUPERADO su resistencia (máximo previo) y la mantienen como
+    # soporte → ahí va el stop. Filosofía position trading: comprar fuerza confirmada,
+    # no adivinar suelos. El máximo NO debe actuar de resistencia: debe haber quedado
+    # ABAJO como soporte. Stop ≤ max_risk_pct (12%), lo que descarta las ya extendidas.
+    breakout_rs_min=90,         # RS estricto (top ~10%) para la lista de rupturas
+    prior_high_exclude=25,      # sesiones recientes excluidas del máximo 52s → "resistencia previa"
+    breakout_hold_window=5,     # las últimas N sesiones deben aguantar sobre el nivel roto
+    retest_margin=0.04,         # si el mínimo reciente volvió a ≤4% del nivel roto → "retest OK"
 )
 
 
@@ -95,6 +110,64 @@ def evaluate_entry(c, h, l, i, rs_val, params=None):
                 trailing_stop_pct=round(p.get('trailing_stop_pct', 32.0), 1))
 
 
+def evaluate_breakout(c, h, l, i, rs_val, params=None):
+    """
+    Detector de RUPTURA CONFIRMADA (lista primaria). Caza líderes que han superado su
+    resistencia (máximo previo de 52s) y la mantienen como SOPORTE, con stop natural
+    justo bajo el nivel roto y riesgo ≤ max_risk_pct (12%). Acepta tanto las que ya
+    han retesteado el nivel como las que solo lo han superado con claridad sin girarse.
+
+    Sin look-ahead: solo usa datos hasta la barra i. Devuelve dict o None.
+    """
+    p = {**DEFAULTS, **(params or {})}
+    if rs_val is None or rs_val < p['breakout_rs_min'] or i < 252:
+        return None
+    px = c[i]
+    ma50 = c[i - 50:i].mean()
+    ma200 = c[i - 200:i].mean()
+    ma50_prev = c[i - 70:i - 20].mean()
+    ma200_prev = c[i - 221:i - 21].mean() if i >= 221 else ma200
+    # Tendencia de fondo (stage 2): líder en tendencia alcista sostenida
+    if not (px > ma50 > ma200 and ma200 > ma200_prev and ma50 > ma50_prev):
+        return None
+
+    # Resistencia previa = máximo de 52s EXCLUYENDO las últimas sesiones (la ruptura).
+    ex = p['prior_high_exclude']
+    prior_high = h[i - 252:i - ex].max()
+    if not (px > prior_high):          # tiene que haber roto el techo
+        return None
+
+    at = _atr(h, l, c, i, p['atr_period'])
+    if not np.isfinite(at) or at <= 0:
+        return None
+
+    # El nivel roto debe AGUANTAR como soporte: en las últimas N sesiones el mínimo no
+    # se ha vuelto a meter (más de medio ATR) por debajo del techo roto. Cubre las dos
+    # opciones: si no ha retesteado, los mínimos están por encima; si retesteó, aguantó.
+    hw = p['breakout_hold_window']
+    recent_low = l[i - hw:i + 1].min()
+    if recent_low < prior_high - 0.5 * at:
+        return None
+
+    # Stop natural: justo bajo el nivel roto (ahora soporte). Riesgo ≤ 12% → esto mismo
+    # descarta las rupturas ya extendidas (precio demasiado por encima del soporte).
+    sl = prior_high - 0.5 * at
+    risk = (px - sl) / px
+    if risk <= 0 or risk > p['max_risk_pct']:
+        return None
+
+    hi52 = h[i - 252:i].max()
+    retested = recent_low <= prior_high * (1 + p['retest_margin'])
+    return dict(signal=True, entry=float(px), sl=round(float(sl), 4),
+                risk_pct=round(float(risk) * 100, 2),
+                breakout_level=round(float(prior_high), 2),
+                pct_above_breakout=round((px / prior_high - 1) * 100, 1),
+                ma50=round(float(ma50), 2), ma200=round(float(ma200), 2),
+                hi52=round(float(hi52), 2),
+                pct_from_high=round((px / hi52 - 1) * 100, 1),
+                retested=bool(retested))
+
+
 def generate_momentum_signals(price_data, spy, step=5, params=None):
     """
     Walk-forward sin look-ahead. En cada fecha:
@@ -111,18 +184,28 @@ def generate_momentum_signals(price_data, spy, step=5, params=None):
         A[s] = dict(idx={ts: i for i, ts in enumerate(d.index)},
                     h=d['High'].values.astype(float),
                     l=d['Low'].values.astype(float),
-                    c=d['Close'].values.astype(float))
+                    c=d['Close'].values.astype(float),
+                    v=(d['Volume'].values.astype(float) if 'Volume' in d.columns else None))
+    lw, mdv, mp = p['liq_window'], p['min_dollar_vol'], p['min_price']
 
     seen, rows = {}, []
     for ci in range(290, len(cal) - 2, step):
         T = cal[ci]
-        # 1) momentum de todo el universo → ranking percentil
+        # 1) momentum del universo LÍQUIDO (point-in-time) → ranking percentil.
+        #    Mismo filtro que producción (dólar-volumen mediano + precio mínimo) pero
+        #    evaluado en CADA fecha sin look-ahead, para que el RS se calcule entre
+        #    nombres institucionales en ese momento, no contra microcaps que 'pop'ean.
         mom = {}
         for s, a in A.items():
             i = a['idx'].get(T)
             if i is None or i < 200:
                 continue
             c = a['c']
+            v = a['v']
+            if v is not None and i >= lw:
+                dollar = float(np.median(c[i - lw + 1:i + 1] * v[i - lw + 1:i + 1]))
+                if c[i] < mp or dollar < mdv:
+                    continue
             base = c[i - p['mom_lookback']]
             if base > 0:
                 mom[s] = c[i] / base - 1

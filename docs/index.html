@@ -25,7 +25,7 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'I -apple-system, BlinkMacSystemFont, sans-serif;
             background-color: var(--bg);
             color: var(--text);
             min-height: 100vh;
@@ -376,7 +376,8 @@
     function render(data) {
         const m = data.market_context || {};
         const s = data.summary || {};
-        const picks = data.top_picks || [];
+        const breakouts = data.breakouts || [];
+        const pullbacks = data.pullbacks || [];
 
         const marketHtml = `
             <div class="market-banner ${m.healthy ? '' : 'bearish'}">
@@ -388,8 +389,8 @@
         const summaryHtml = `
             <div class="summary-grid">
                 <div class="summary-card">
-                    <div class="value">${s.picks || 0}</div>
-                    <div class="label">Picks operables</div>
+                    <div class="value">${breakouts.length}</div>
+                    <div class="label">Rupturas confirmadas</div>
                 </div>
                 <div class="summary-card">
                     <div class="value">${s.leaders || 0}</div>
@@ -397,76 +398,105 @@
                 </div>
                 <div class="summary-card">
                     <div class="value">${s.total_analyzed || 0}</div>
-                    <div class="label">Analizadas</div>
+                    <div class="label">Líquidas</div>
                 </div>
             </div>`;
 
-        let picksHtml;
+        let mainHtml;
         if (!m.healthy) {
-            picksHtml = `<div class="no-data">
+            mainHtml = `<div class="no-data">
                 <div class="icon">⚠️</div>
-                <div class="title">Mercado bajista — a liquidez</div>
-                <div class="desc">El SPY está bajo su MA200. La estrategia de momentum NO opera en bear markets (es donde más drawdown sufre). Espera a que el mercado recupere su tendencia alcista.</div>
+                <div class="title">Mercado bajista — a liquidez / indexado</div>
+                <div class="desc">El SPY está bajo su MA200. NO se cazan líderes en bear market (es donde más drawdown sufren). Espera a que el mercado recupere su tendencia alcista.</div>
             </div>`;
-        } else if (picks.length === 0) {
-            picksHtml = `<div class="no-data">
+        } else if (breakouts.length === 0) {
+            mainHtml = `<div class="no-data">
                 <div class="icon">📊</div>
-                <div class="title">Sin líderes en pullback hoy</div>
-                <div class="desc">${s.total_analyzed || 0} acciones analizadas. Ningún líder está hoy en un punto de entrada (rebote en MA50). Vuelve mañana.</div>
+                <div class="title">Sin rupturas confirmadas hoy</div>
+                <div class="desc">${s.total_analyzed || 0} líquidas analizadas. Ningún líder fuerte ha roto su máximo previo con el nivel aguantando como soporte. Normal: se esperan pocas (revisa a diario).</div>
             </div>`;
         } else {
-            picksHtml = '<div class="section-title">🔝 Líderes en pullback (' + picks.length + ')</div>' +
-                picks.map(p => renderPick(p)).join('');
+            mainHtml = '<div class="section-title">🚀 Rupturas confirmadas — para revisar (' + breakouts.length + ')</div>' +
+                breakouts.map(p => renderBreakout(p)).join('');
         }
 
-        document.getElementById('content').innerHTML = marketHtml + summaryHtml + picksHtml;
+        let pbHtml = '';
+        if (m.healthy && pullbacks.length) {
+            pbHtml = '<div class="section-title">📉 Secundario — líderes en pullback a MA50 (' + pullbacks.length + ')</div>' +
+                pullbacks.map(p => renderPullback(p)).join('');
+        }
+
+        document.getElementById('content').innerHTML = marketHtml + summaryHtml + mainHtml + pbHtml;
 
         const now = new Date(data.timestamp || Date.now());
         const cr = data.criteria || {};
         document.getElementById('footer-content').innerHTML = `
-            <div class="strategy">${data.strategy || 'Momentum / Fuerza Relativa'}</div>
-            <div>${cr.selection || 'Líderes RS top 20% en tendencia alcista, cerca de máximos'}</div>
-            <div>Entrada: ${cr.entry || 'rebote en MA50'} · Salida: dejar correr con trailing stop</div>
+            <div class="strategy">${data.strategy || 'Detector de líderes — ruptura confirmada'}</div>
+            <div>${cr.selection || ''}</div>
+            <div>${cr.stop || ''}</div>
+            <div>Salida: dejar correr con trailing stop (gestión manual)</div>
             <div style="margin-top:8px;">Actualizado: ${now.toLocaleString('es-ES')}</div>
         `;
     }
 
-    function renderPick(p) {
-        const r = p.relative_strength || {};
-        const tr = p.trend || {};
-        const rm = p.risk_management || {};
-        const rsClass = (r.rs_rating >= 90) ? 'test-active' : '';
-
+    function renderBreakout(p) {
+        const rsClass = (p.rs_rating >= 90) ? 'test-active' : '';
         return `
             <div class="pick-card ${rsClass}">
                 <div class="pick-header">
                     <div>
                         <span class="pick-rank">#${p.rank}</span>
                         <span class="pick-symbol">${p.symbol}</span>
-                        <div class="pick-company">RS ${fmt(r.rs_rating, 0)}/100 · ${r.label || 'Líder'}</div>
+                        <div class="pick-company">RS ${fmt(p.rs_rating, 0)}/100 · momentum 6m ${fmt(p.mom6m, 0)}%</div>
                     </div>
                     <div>
                         <div class="pick-price">${fmtPrice(p.price)}</div>
-                        <div class="pick-sector">${fmt(tr.pct_from_52w_high, 0)}% del máx 52s</div>
+                        <div class="pick-sector">${fmt(p.pct_from_52w_high, 0)}% del máx 52s</div>
                     </div>
                 </div>
 
-                <div class="status-badge test-active">📈 Líder en pullback a MA50</div>
+                <div class="status-badge ${p.retested ? 'test-active' : ''}">${p.retested ? '🟢 Retest OK — soporte confirmado' : '🟡 Ruptura clara, sin retest aún'}</div>
 
-                <div class="section-subtitle">Tendencia</div>
-                <div class="detail-row"><span class="k">Precio</span><span class="v">${fmtPrice(p.price)}</span></div>
-                <div class="detail-row"><span class="k">MA50 (soporte del pullback)</span><span class="v">${fmtPrice(tr.ma50)}</span></div>
-                <div class="detail-row"><span class="k">MA200 (tendencia de fondo)</span><span class="v">${fmtPrice(tr.ma200)}</span></div>
-                <div class="detail-row"><span class="k">Distancia a máximo 52s</span><span class="v">${fmt(tr.pct_from_52w_high, 1)}%</span></div>
+                <div class="section-subtitle">Ruptura</div>
+                <div class="detail-row"><span class="k">Nivel roto (resistencia → soporte)</span><span class="v">${fmtPrice(p.breakout_level)}</span></div>
+                <div class="detail-row"><span class="k">Precio sobre la ruptura</span><span class="v">+${fmt(p.pct_above_breakout, 1)}%</span></div>
+                <div class="detail-row"><span class="k">MA50</span><span class="v">${fmtPrice(p.ma50)}</span></div>
+                <div class="detail-row"><span class="k">MA200 (tendencia de fondo)</span><span class="v">${fmtPrice(p.ma200)}</span></div>
 
                 <div class="section-subtitle">Gestión de riesgo</div>
                 <div class="risk-grid">
-                    <div class="kv"><span class="k">Entrada</span><span class="v">${fmtPrice(rm.entry_price)}</span></div>
-                    <div class="kv"><span class="k">Stop Loss</span><span class="v sl">${fmtPrice(rm.sl)}</span></div>
-                    <div class="kv"><span class="k">Riesgo</span><span class="v sl">${fmtPct(rm.risk_pct)}</span></div>
-                    <div class="kv"><span class="k">Trailing salida</span><span class="v tp">${fmt(rm.trailing_stop_pct, 0)}%</span></div>
+                    <div class="kv"><span class="k">Entrada</span><span class="v">${fmtPrice(p.price)}</span></div>
+                    <div class="kv"><span class="k">Stop Loss</span><span class="v sl">${fmtPrice(p.sl)}</span></div>
+                    <div class="kv"><span class="k">Riesgo</span><span class="v sl">${fmtPct(p.risk_pct)}</span></div>
                 </div>
-                <div class="risk-explanation">${rm.sl_explanation || ''}<br>🎯 ${rm.exit_strategy || 'Dejar correr con trailing stop'}</div>
+                <div class="risk-explanation">${p.sl_explanation || ''}<br>🎯 ${p.note || ''}<br>💡 Empezar poco y piramidar si sigue subiendo.</div>
+            </div>`;
+    }
+
+    function renderPullback(p) {
+        const rsClass = (p.rs_rating >= 90) ? 'test-active' : '';
+        return `
+            <div class="pick-card ${rsClass}">
+                <div class="pick-header">
+                    <div>
+                        <span class="pick-rank">#${p.rank}</span>
+                        <span class="pick-symbol">${p.symbol}</span>
+                        <div class="pick-company">RS ${fmt(p.rs_rating, 0)}/100 · momentum 6m ${fmt(p.mom6m, 0)}%</div>
+                    </div>
+                    <div>
+                        <div class="pick-price">${fmtPrice(p.price)}</div>
+                        <div class="pick-sector">${fmt(p.pct_from_52w_high, 0)}% del máx 52s</div>
+                    </div>
+                </div>
+                <div class="status-badge">📉 ${p.note || 'Rebote en MA50'}</div>
+                <div class="detail-row"><span class="k">MA50 (soporte del pullback)</span><span class="v">${fmtPrice(p.ma50)}</span></div>
+                <div class="detail-row"><span class="k">MA200 (tendencia de fondo)</span><span class="v">${fmtPrice(p.ma200)}</span></div>
+                <div class="risk-grid">
+                    <div class="kv"><span class="k">Entrada</span><span class="v">${fmtPrice(p.price)}</span></div>
+                    <div class="kv"><span class="k">Stop Loss</span><span class="v sl">${fmtPrice(p.sl)}</span></div>
+                    <div class="kv"><span class="k">Riesgo</span><span class="v sl">${fmtPct(p.risk_pct)}</span></div>
+                </div>
+                <div class="risk-explanation">${p.sl_explanation || ''}</div>
             </div>`;
     }
 

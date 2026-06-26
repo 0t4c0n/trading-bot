@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from market_data import MarketData
-from momentum_strategy import evaluate_entry, DEFAULTS
+from momentum_strategy import evaluate_entry, evaluate_breakout, DEFAULTS
 
 MOM_LOOKBACK = DEFAULTS['mom_lookback']   # 126 sesiones (6 meses)
 
@@ -66,61 +66,108 @@ def find_momentum_picks(data, rs_ratings, market_healthy):
     return picks
 
 
-def build_dashboard(picks, market_healthy, market_score, n_universe, n_leaders):
+def find_breakouts(data, rs_ratings, market_healthy):
+    """Lista PRIMARIA: líderes con RUPTURA confirmada de su resistencia (máximo previo),
+    que la mantienen como soporte, con stop natural ≤12% bajo el nivel roto. Position
+    trading: comprar fuerza confirmada para revisar a mano y, si sigue, piramidar."""
+    out = []
+    if not market_healthy:
+        return out
+    for s, df in data.items():
+        try:
+            c = df['Close'].values.astype(float)
+            h = df['High'].values.astype(float)
+            l = df['Low'].values.astype(float)
+        except Exception:
+            continue
+        i = len(c) - 1
+        sig = evaluate_breakout(c, h, l, i, float(rs_ratings.get(s, 0)), DEFAULTS)
+        if sig is None:
+            continue
+        mom6m = (c[i] / c[i - MOM_LOOKBACK] - 1) * 100 if c[i - MOM_LOOKBACK] > 0 else 0.0
+        out.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), mom6m=round(mom6m, 1), **sig))
+    # Ranking: primero las que ya retestearon (entrada de menor riesgo) y, dentro de
+    # cada grupo, por fuerza relativa. Tú eliges a mano dentro de las que salgan.
+    out.sort(key=lambda x: (not x['retested'], -x['rs']))
+    return out
+
+
+def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_universe, n_leaders):
     data = {
         "timestamp": datetime.now().isoformat(),
         "market_date": datetime.now().strftime("%Y-%m-%d"),
-        "strategy": "Momentum / Fuerza Relativa (líderes + pullback MA50)",
+        "strategy": "Detector de líderes — ruptura de máximos confirmada (position trading)",
         "market_context": {
             "healthy": bool(market_healthy),
             "health_score": float(market_score),
-            "status_label": "ALCISTA ✅ — se opera" if market_healthy else "BAJISTA ⚠️ — a liquidez",
-            "description": "SPY sobre MA200: condiciones para comprar líderes en pullback"
+            "status_label": "ALCISTA ✅ — se busca" if market_healthy else "BAJISTA ⚠️ — a liquidez",
+            "description": "SPY sobre MA200: condiciones para cazar líderes con ruptura"
                            if market_healthy else
-                           "SPY bajo MA200: NO se opera momentum (riesgo de drawdown). A liquidez.",
+                           "SPY bajo MA200: NO se busca (riesgo de drawdown). A liquidez / indexado.",
         },
         "summary": {
             "total_analyzed": n_universe,
             "leaders": n_leaders,
-            "picks": len(picks),
-            "message": (f"{len(picks)} líderes en pullback operables hoy "
-                        f"(de {n_leaders} líderes / {n_universe} acciones) | "
+            "picks": len(breakouts),
+            "message": (f"{len(breakouts)} rupturas confirmadas + {len(pullbacks)} en pullback "
+                        f"(de {n_leaders} líderes / {n_universe} líquidas) | "
                         f"Mercado {'alcista ✅' if market_healthy else 'bajista ⚠️ — a liquidez'}"),
         },
         "criteria": {
-            "market_filter": "SOLO opera si SPY > MA200 (en bear: 0 picks)",
-            "selection": "RS top 20% (retorno 6m) + px>MA50>MA200 (ambas subiendo) + dentro del 25% del máximo 52s",
-            "entry": "Rebote en MA50 en subida (retroceso que toca la MA50 y rebota)",
-            "stop": "Mínimo del retroceso − 0.5×ATR(14), riesgo ≤ 12%",
+            "market_filter": "SOLO se busca si SPY > MA200 (en bear: 0 candidatos)",
+            "liquidity": (f"Universo filtrado a nombres líquidos: dólar-volumen mediano "
+                          f"≥ ${DEFAULTS['min_dollar_vol']/1e6:.0f}M/día y precio "
+                          f"≥ ${DEFAULTS['min_price']:.0f} (fuera microcaps/chicharros)"),
+            "selection": (f"PRIMARIO: RS top 10% (≥{DEFAULTS['breakout_rs_min']}) + px>MA50>MA200 "
+                          f"(ambas subiendo) + RUPTURA del máximo previo (52s) que aguanta como soporte"),
+            "entry": "Comprar la fuerza confirmada; empezar poco y piramidar si sigue subiendo",
+            "stop": f"Justo bajo el nivel roto (ahora soporte) − 0.5×ATR(14), riesgo ≤ {DEFAULTS['max_risk_pct']*100:.0f}%",
             "exit": "Dejar correr: trailing stop ~32% bajo el máximo alcanzado (gestión manual)",
+            "secondary": "SECUNDARIO: líderes (RS top 20%) en rebote sobre la MA50 (entrada de bajo riesgo)",
         },
-        "top_picks": [],
+        "breakouts": [],
+        "pullbacks": [],
     }
-    for rank, p in enumerate(picks[:20], 1):
-        entry = p['entry']
-        data["top_picks"].append({
+    for rank, p in enumerate(breakouts, 1):
+        data["breakouts"].append({
             "rank": rank,
             "symbol": p['symbol'],
-            "price": round(entry, 2),
-            "relative_strength": {"rs_rating": round(p['rs'], 1),
-                                  "label": "Líder fuerte" if p['rs'] >= 90 else "Líder"},
-            "trend": {"ma50": p['ma50'], "ma200": p['ma200'],
-                      "pct_from_52w_high": p['pct_from_high']},
-            "risk_management": {
-                "entry_price": round(entry, 2),
-                "sl": p['sl'],
-                "risk_pct": p['risk_pct'],
-                "sl_explanation": "Mínimo del pullback − 0.5×ATR (rebote en MA50)",
-                "trailing_stop_pct": p['trailing_stop_pct'],
-                "exit_strategy": f"Dejar correr: trailing stop {p['trailing_stop_pct']:.0f}% "
-                                 f"bajo el máximo (objetivo: cabalgar al líder)",
-            },
+            "price": round(p['entry'], 2),
+            "rs_rating": round(p['rs'], 1),
+            "mom6m": p['mom6m'],
+            "retested": p['retested'],
+            "breakout_level": p['breakout_level'],
+            "pct_above_breakout": p['pct_above_breakout'],
+            "pct_from_52w_high": p['pct_from_high'],
+            "ma50": p['ma50'],
+            "ma200": p['ma200'],
+            "sl": p['sl'],
+            "risk_pct": p['risk_pct'],
+            "note": ("Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)"
+                     if p['retested'] else
+                     "Ruptura clara, aún sin retest — entrar a medias o esperar retest"),
+            "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR",
+        })
+    for rank, p in enumerate(pullbacks[:5], 1):
+        data["pullbacks"].append({
+            "rank": rank,
+            "symbol": p['symbol'],
+            "price": round(p['entry'], 2),
+            "rs_rating": round(p['rs'], 1),
+            "mom6m": p['mom6m'],
+            "pct_from_52w_high": p['pct_from_high'],
+            "ma50": p['ma50'],
+            "ma200": p['ma200'],
+            "sl": p['sl'],
+            "risk_pct": p['risk_pct'],
+            "note": "Rebote en la MA50 en subida (entrada de bajo riesgo)",
+            "sl_explanation": "Mínimo del pullback − 0.5×ATR (rebote en MA50)",
         })
     return data
 
 
 def run_momentum_screener():
-    print("=== SCREENER MOMENTUM (líderes + pullback MA50) ===")
+    print("=== DETECTOR DE LÍDERES (ruptura confirmada + pullback MA50) ===")
     md = MarketData()
     symbols = md.get_universe()
     print(f"Universo: {len(symbols)} acciones. Descargando...")
@@ -129,31 +176,45 @@ def run_momentum_screener():
     spy = data.pop('_MARKET_INDEX', None)
     print(f"Con datos: {len(data)} acciones")
 
+    # Filtro de liquidez ANTES del RS: que el percentil de fuerza relativa se calcule
+    # entre nombres institucionales, no contra microcaps que 'pop'ean una vez.
+    liquid = set(md.liquid_symbols(data, min_dollar_vol=DEFAULTS['min_dollar_vol'],
+                                   min_price=DEFAULTS['min_price'], window=DEFAULTS['liq_window']))
+    n_universe_raw = len(data)
+    data = {s: df for s, df in data.items() if s in liquid}
+    print(f"Líquidas (≥${DEFAULTS['min_dollar_vol']/1e6:.0f}M/día mediana, "
+          f">${DEFAULTS['min_price']:.0f}): {len(data)} (de {n_universe_raw})")
+
     market_healthy, market_score = md.check_market_health(spy)
     print(f"Mercado: {'ALCISTA ✅' if market_healthy else 'BAJISTA ⚠️ (a liquidez)'} (score {market_score})")
 
     rs = compute_rs_percentile(data)
     n_leaders = int((rs >= DEFAULTS['rs_min']).sum())
-    picks = find_momentum_picks(data, rs, market_healthy)
-    print(f"Líderes (RS≥{DEFAULTS['rs_min']}): {n_leaders} | Picks operables hoy: {len(picks)}")
+    breakouts = find_breakouts(data, rs, market_healthy)
+    pullbacks = find_momentum_picks(data, rs, market_healthy)
+    print(f"Líderes (RS≥{DEFAULTS['rs_min']}): {n_leaders} | "
+          f"Rupturas confirmadas (RS≥{DEFAULTS['breakout_rs_min']}): {len(breakouts)} | "
+          f"Pullback MA50: {len(pullbacks)}")
 
-    # Guardar CSV de picks
+    # Guardar CSV de rupturas (lista primaria)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if picks:
-        pd.DataFrame(picks).to_csv(f"momentum_picks_{ts}.csv", index=False)
+    if breakouts:
+        pd.DataFrame(breakouts).to_csv(f"momentum_breakouts_{ts}.csv", index=False)
 
     # Guardar dashboard
-    dash = build_dashboard(picks, market_healthy, market_score, len(data), n_leaders)
+    dash = build_dashboard(breakouts, pullbacks, market_healthy, market_score, len(data), n_leaders)
     os.makedirs('docs', exist_ok=True)
     with open('docs/data.json', 'w', encoding='utf-8') as f:
         json.dump(dash, f, indent=2, ensure_ascii=False)
     with open('docs/last_update.txt', 'w') as f:
         f.write(datetime.now().isoformat())
-    print(f"✅ Dashboard actualizado: docs/data.json ({len(picks)} picks)")
-    for p in picks[:10]:
-        print(f"  {p['symbol']:<6} RS={p['rs']:.0f}  entry={p['entry']:.2f}  "
-              f"SL={p['sl']:.2f}  riesgo={p['risk_pct']:.1f}%  ({p['pct_from_high']:.0f}% del máx)")
-    return picks
+    print(f"✅ Dashboard actualizado: docs/data.json ({len(breakouts)} rupturas)")
+    for p in breakouts[:10]:
+        tag = "retest✓" if p['retested'] else "sin retest"
+        print(f"  {p['symbol']:<6} RS={p['rs']:.0f}  px={p['entry']:.2f}  "
+              f"ruptura={p['breakout_level']:.2f} (+{p['pct_above_breakout']:.1f}%)  "
+              f"SL={p['sl']:.2f}  riesgo={p['risk_pct']:.1f}%  {tag}")
+    return breakouts
 
 
 if __name__ == "__main__":
