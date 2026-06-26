@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-26T11:03:27.108137",
+  "timestamp": "2026-06-26T11:48:53.046393",
   "market_date": "2026-06-26",
   "strategy": "Detector de líderes — ruptura de máximos confirmada (position trading)",
   "market_context": {
@@ -11,13 +11,14 @@
   "summary": {
     "total_analyzed": 1656,
     "leaders": 330,
-    "picks": 20,
-    "message": "20 rupturas confirmadas + 21 en pullback (de 330 líderes / 1656 líquidas) | Mercado alcista ✅"
+    "picks": 16,
+    "message": "16 rupturas confirmadas + 21 en pullback (de 330 líderes / 1656 líquidas) | Mercado alcista ✅"
   },
   "criteria": {
     "market_filter": "SOLO se busca si SPY > MA200 (en bear: 0 candidatos)",
     "liquidity": "Universo filtrado a nombres líquidos: dólar-volumen mediano ≥ $20M/día y precio ≥ $10 (fuera microcaps/chicharros)",
     "selection": "PRIMARIO: RS top 10% (≥90) + px>MA50>MA200 (ambas subiendo) + RUPTURA del máximo previo (52s) que aguanta como soporte",
+    "exclusions": "Fuera cripto-directo (mineras / tesorerías bitcoin / exchanges) por volatilidad y riesgo regulatorio; se mantienen las de tecnología blockchain",
     "entry": "Comprar la fuerza confirmada; empezar poco y piramidar si sigue subiendo",
     "stop": "Justo bajo el nivel roto (ahora soporte) − 0.5×ATR(14), riesgo ≤ 12%",
     "exit": "Dejar correr: trailing stop ~32% bajo el máximo alcanzado (gestión manual)",
@@ -43,23 +44,6 @@
     },
     {
       "rank": 2,
-      "symbol": "HUT",
-      "price": 117.68,
-      "rs_rating": 96.5,
-      "mom6m": 133.5,
-      "retested": true,
-      "breakout_level": 112.26,
-      "pct_above_breakout": 4.8,
-      "pct_from_52w_high": -16.4,
-      "ma50": 101.56,
-      "ma200": 61.18,
-      "sl": 106.9256,
-      "risk_pct": 9.14,
-      "note": "Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)",
-      "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
-    },
-    {
-      "rank": 3,
       "symbol": "BHE",
       "price": 97.19,
       "rs_rating": 95.6,
@@ -76,7 +60,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 4,
+      "rank": 3,
       "symbol": "ONTO",
       "price": 344.24,
       "rs_rating": 95.3,
@@ -93,7 +77,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 5,
+      "rank": 4,
       "symbol": "SNEX",
       "price": 137.28,
       "rs_rating": 95.0,
@@ -110,7 +94,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 6,
+      "rank": 5,
       "symbol": "AMKR",
       "price": 85.62,
       "rs_rating": 94.7,
@@ -127,24 +111,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 7,
-      "symbol": "WULF",
-      "price": 26.06,
-      "rs_rating": 94.5,
-      "mom6m": 109.0,
-      "retested": true,
-      "breakout_level": 25.76,
-      "pct_above_breakout": 1.2,
-      "pct_from_52w_high": -12.7,
-      "ma50": 23.74,
-      "ma200": 16.36,
-      "sl": 24.6821,
-      "risk_pct": 5.29,
-      "note": "Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)",
-      "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
-    },
-    {
-      "rank": 8,
+      "rank": 6,
       "symbol": "ARW",
       "price": 229.03,
       "rs_rating": 93.9,
@@ -161,7 +128,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 9,
+      "rank": 7,
       "symbol": "GTX",
       "price": 35.01,
       "rs_rating": 93.8,
@@ -178,7 +145,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 10,
+      "rank": 8,
       "symbol": "PLXS",
       "price": 296.79,
       "rs_rating": 93.5,
@@ -195,24 +162,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 11,
-      "symbol": "RIOT",
-      "price": 27.76,
-      "rs_rating": 93.4,
-      "mom6m": 92.8,
-      "retested": true,
-      "breakout_level": 25.86,
-      "pct_above_breakout": 7.3,
-      "pct_from_52w_high": -8.4,
-      "ma50": 23.33,
-      "ma200": 18.03,
-      "sl": 24.8275,
-      "risk_pct": 10.56,
-      "note": "Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)",
-      "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
-    },
-    {
-      "rank": 12,
+      "rank": 9,
       "symbol": "ESI",
       "price": 47.72,
       "rs_rating": 92.7,
@@ -229,7 +179,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 13,
+      "rank": 10,
       "symbol": "VIRT",
       "price": 61.05,
       "rs_rating": 92.6,
@@ -246,7 +196,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 14,
+      "rank": 11,
       "symbol": "AVT",
       "price": 90.81,
       "rs_rating": 92.5,
@@ -263,7 +213,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 15,
+      "rank": 12,
       "symbol": "PLPC",
       "price": 405.0,
       "rs_rating": 92.5,
@@ -280,7 +230,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 16,
+      "rank": 13,
       "symbol": "DVA",
       "price": 213.36,
       "rs_rating": 92.2,
@@ -297,7 +247,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 17,
+      "rank": 14,
       "symbol": "OUST",
       "price": 41.82,
       "rs_rating": 92.0,
@@ -314,7 +264,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 18,
+      "rank": 15,
       "symbol": "DCO",
       "price": 170.41,
       "rs_rating": 90.3,
@@ -331,7 +281,7 @@
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     },
     {
-      "rank": 19,
+      "rank": 16,
       "symbol": "KN",
       "price": 40.79,
       "rs_rating": 92.4,
@@ -344,23 +294,6 @@
       "ma200": 26.87,
       "sl": 36.2532,
       "risk_pct": 11.12,
-      "note": "Ruptura clara, aún sin retest — entrar a medias o esperar retest",
-      "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
-    },
-    {
-      "rank": 20,
-      "symbol": "CORZ",
-      "price": 27.27,
-      "rs_rating": 90.3,
-      "mom6m": 72.7,
-      "retested": false,
-      "breakout_level": 25.17,
-      "pct_above_breakout": 8.3,
-      "pct_from_52w_high": -10.5,
-      "ma50": 24.33,
-      "ma200": 18.94,
-      "sl": 24.277,
-      "risk_pct": 10.98,
       "note": "Ruptura clara, aún sin retest — entrar a medias o esperar retest",
       "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR"
     }

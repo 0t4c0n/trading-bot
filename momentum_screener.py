@@ -120,6 +120,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
                           f"≥ ${DEFAULTS['min_price']:.0f} (fuera microcaps/chicharros)"),
             "selection": (f"PRIMARIO: RS top 10% (≥{DEFAULTS['breakout_rs_min']}) + px>MA50>MA200 "
                           f"(ambas subiendo) + RUPTURA del máximo previo (52s) que aguanta como soporte"),
+            "exclusions": "Fuera cripto-directo (mineras / tesorerías bitcoin / exchanges) por volatilidad y riesgo regulatorio; se mantienen las de tecnología blockchain",
             "entry": "Comprar la fuerza confirmada; empezar poco y piramidar si sigue subiendo",
             "stop": f"Justo bajo el nivel roto (ahora soporte) − 0.5×ATR(14), riesgo ≤ {DEFAULTS['max_risk_pct']*100:.0f}%",
             "exit": "Dejar correr: trailing stop ~32% bajo el máximo alcanzado (gestión manual)",
@@ -192,6 +193,17 @@ def run_momentum_screener():
     n_leaders = int((rs >= DEFAULTS['rs_min']).sum())
     breakouts = find_breakouts(data, rs, market_healthy)
     pullbacks = find_momentum_picks(data, rs, market_healthy)
+
+    # Excluir cripto-DIRECTO (mineras / tesorerías bitcoin / exchanges): muy volátil y con
+    # riesgo regulatorio. Se mantienen las de tecnología blockchain. Solo se consulta la
+    # descripción de los candidatos finales (barato), no de todo el universo.
+    cand = {p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks}
+    crypto = md.crypto_direct_symbols(cand) if cand else set()
+    if crypto:
+        breakouts = [p for p in breakouts if p['symbol'] not in crypto]
+        pullbacks = [p for p in pullbacks if p['symbol'] not in crypto]
+        print(f"Excluidas cripto-directo: {sorted(crypto)}")
+
     print(f"Líderes (RS≥{DEFAULTS['rs_min']}): {n_leaders} | "
           f"Rupturas confirmadas (RS≥{DEFAULTS['breakout_rs_min']}): {len(breakouts)} | "
           f"Pullback MA50: {len(pullbacks)}")

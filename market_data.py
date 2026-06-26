@@ -163,6 +163,44 @@ class MarketData:
                 keep.append(s)
         return keep
 
+    # --- Exclusión de cripto-DIRECTO (mineras / tesorerías bitcoin / exchanges) ---
+    # El usuario quiere fuera lo DIRECTAMENTE ligado a cripto/bitcoin (muy volátil y con
+    # riesgo regulatorio: prohibiciones, etc.), pero MANTENER las de tecnología blockchain.
+    # La API de NASDAQ no da industria fiable (RIOT figura como "Financial Services"), así
+    # que se detecta por la DESCRIPCIÓN del negocio (yfinance) + una lista conocida.
+    KNOWN_CRYPTO_DIRECT = {
+        'COIN', 'MSTR', 'MARA', 'RIOT', 'CLSK', 'HUT', 'WULF', 'CORZ', 'BITF', 'BTBT',
+        'CIFR', 'IREN', 'HIVE', 'BTDR', 'SDIG', 'GREE', 'BTCS', 'SOS', 'CAN', 'CANG',
+        'EBON', 'NCTY', 'BTCM', 'DGHI', 'ARBK', 'BTM', 'BTCT', 'SLNH', 'GRYP',
+    }
+    CRYPTO_EXCLUDE_KEYWORDS = (
+        'bitcoin mining', 'bitcoin miner', 'mine bitcoin', 'mining bitcoin',
+        'cryptocurrency mining', 'crypto mining', 'digital asset mining',
+        'mining of digital assets', 'mining of cryptocurrency', 'mines cryptocurrency',
+        'mining of bitcoin', 'bitcoin treasury', 'cryptocurrency treasury',
+        'crypto treasury', 'cryptocurrency exchange', 'crypto asset',
+    )
+
+    @classmethod
+    def crypto_direct_symbols(cls, symbols):
+        """Subconjunto de `symbols` cuyo negocio es DIRECTAMENTE cripto/bitcoin (mineras,
+        tesorerías bitcoin, exchanges). Combina la lista conocida + detección por la
+        descripción de negocio de yfinance (así caza mineras nuevas automáticamente). Las
+        de tecnología blockchain 'normal' no disparan estas palabras clave. Ante fallo de
+        red, no descarta (la revisión manual lo vería)."""
+        out = set()
+        for s in symbols:
+            if s in cls.KNOWN_CRYPTO_DIRECT:
+                out.add(s)
+                continue
+            try:
+                summ = (yf.Ticker(s).info.get('longBusinessSummary', '') or '').lower()
+            except Exception:
+                continue
+            if any(k in summ for k in cls.CRYPTO_EXCLUDE_KEYWORDS):
+                out.add(s)
+        return out
+
     # --- Salud del mercado ---
     def check_market_health(self, spy_df):
         """¿Mercado alcista? (SPY sobre MA200). Devuelve (healthy: bool, score 0-15)."""
