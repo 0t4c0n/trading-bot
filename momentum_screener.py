@@ -314,8 +314,12 @@ def run_momentum_screener():
 
     # Enriquecer SOLO los candidatos finales con yfinance (una llamada por símbolo):
     # cripto-directo, sector, margen, crecimiento, recomendación, objetivo y earnings.
+    # OJO: se enriquece el watch COMPLETO (no watch[:MAX_WATCH]): el filtro keep() de
+    # rentabilidad/cripto que viene a continuación recorta el watch y reordena qué entra
+    # en el top MAX_WATCH mostrado; si solo enriqueciéramos los 3 primeros, los que
+    # ascienden al top tras el filtro saldrían sin nombre/sector y sin gate de rentabilidad.
     cand = sorted({p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks}
-                  | {p['symbol'] for p in watch[:MAX_WATCH]})
+                  | {p['symbol'] for p in watch})
     if cand:
         time.sleep(15)   # dejar respirar a Yahoo tras la descarga masiva antes de pedir .info
     enrich = md.enrich_candidates(cand) if cand else {}

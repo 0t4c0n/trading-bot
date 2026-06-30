@@ -38,6 +38,22 @@ def is_common_stock(name):
     return bool(_INSTRUMENT_KEEP_RE.search(n))
 
 
+# La API de NASDAQ da el nombre con el sufijo del tipo de instrumento ("Amkor
+# Technology, Inc. Common Stock"). Lo recortamos para mostrar solo la razón social.
+_NAME_SUFFIX_RE = re.compile(
+    r'\s*[-,]?\s*(common stock|common shares|class [a-z]\b.*|'
+    r'american depositary shares.*|depositary shares.*|ordinary shares.*)$', re.I)
+
+
+def clean_company_name(name):
+    """Quita el sufijo de tipo de instrumento del nombre del NASDAQ. Devuelve None si vacío."""
+    n = (name or '').strip()
+    if not n:
+        return None
+    n = _NAME_SUFFIX_RE.sub('', n).strip().rstrip(',').strip()
+    return n or None
+
+
 class MarketData:
     def __init__(self, history_days=540):
         # 540 días naturales (~18 meses) — margen cómodo para MA200, máximo 52s y
@@ -181,48 +197,83 @@ class MarketData:
         'crypto treasury', 'cryptocurrency exchange', 'crypto asset',
     )
 
-    @classmethod
-    def enrich_candidates(cls, symbols, retries=5, pause=0.6):
+    def _fetch_info(self, s, retries, pause):
+        """Una pasada de yfinance .info sobre un símbolo. Devuelve dict enriquecido o None
+        si Yahoo devolvió vacío (throttle) en todos los reintentos."""
+        import time as _t
+        for attempt in range(retries):
+            try:
+                info = yf.Ticker(s).info or {}
+                # respuesta útil: debe traer al menos sector o un fundamental o la descripción
+                if not any(info.get(k) for k in
+                           ('sector', 'profitMargins', 'longBusinessSummary', 'longName')):
+                    raise ValueError('info vacío (throttle)')
+                summ = (info.get('longBusinessSummary', '') or '').lower()
+                is_crypto = any(k in summ for k in self.CRYPTO_EXCLUDE_KEYWORDS)
+                ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
+                return dict(
+                    is_crypto=is_crypto,
+                    name=info.get('longName') or info.get('shortName'),
+                    sector=info.get('sector'),
+                    margin=info.get('profitMargins'),
+                    revg=info.get('revenueGrowth'),
+                    epsg=info.get('earningsGrowth') or info.get('earningsQuarterlyGrowth'),
+                    rating=info.get('recommendationKey'),
+                    target=info.get('targetMeanPrice'),
+                    earnings_days=int((ts - _t.time()) // 86400) if ts else None,
+                    enriched=True,
+                )
+            except Exception:
+                _t.sleep(pause * (2 ** attempt))   # backoff: 0.6, 1.2, 2.4 s
+        return None
+
+    def enrich_candidates(self, symbols, retries=3, pause=0.6, cooldown=25):
         """Consulta yfinance .info por candidato (solo ~decenas) para lo que el código no
         calcula: cripto-directo, sector, margen neto, crecimiento ventas/EPS, recomendación,
         objetivo y días al próximo resultado. dict[sym] -> dict(...).
 
         yfinance .info es FRÁGIL en lote (Yahoo lo throttlea tras descargas pesadas y
-        devuelve vacío): por eso reintenta con backoff y pausa entre símbolos, y detecta
-        respuestas vacías. Si aun así falla, deja los campos a None y marca enriched=False
-        (el screener degrada con elegancia: no filtra por fundamental ni avisa de sector)."""
+        devuelve vacío). Estrategia anti-throttle:
+          - Primera pasada con reintentos + pausa cortés entre símbolos.
+          - SEGUNDA pasada SOLO sobre los que fallaron, tras un `cooldown` largo (a Yahoo
+            le sienta mejor descansar que martillear el mismo símbolo seguido).
+          - El `name` y el `sector` SIEMPRE caen, si falta, al nombre/sector del NASDAQ
+            (ya descargado en get_universe, sin coste): así el dashboard nunca muestra el
+            ticker como 'nombre' ni queda sin sector aunque .info no responda.
+        Si aun así falta un fundamental, queda a None y el screener degrada con elegancia."""
         import time as _t
         out = {}
         for s in symbols:
-            d = dict(is_crypto=(s in cls.KNOWN_CRYPTO_DIRECT), name=None, sector=None, margin=None,
-                     revg=None, epsg=None, rating=None, target=None, earnings_days=None,
-                     enriched=False)
-            for attempt in range(retries):
-                try:
-                    info = yf.Ticker(s).info or {}
-                    # respuesta útil: debe traer al menos sector o un fundamental o la descripción
-                    if not any(info.get(k) for k in
-                               ('sector', 'profitMargins', 'longBusinessSummary', 'longName')):
-                        raise ValueError('info vacío (throttle)')
-                    summ = (info.get('longBusinessSummary', '') or '').lower()
-                    if not d['is_crypto'] and any(k in summ for k in cls.CRYPTO_EXCLUDE_KEYWORDS):
-                        d['is_crypto'] = True
-                    d['name'] = info.get('longName') or info.get('shortName')
-                    d['sector'] = info.get('sector')
-                    d['margin'] = info.get('profitMargins')
-                    d['revg'] = info.get('revenueGrowth')
-                    d['epsg'] = info.get('earningsGrowth') or info.get('earningsQuarterlyGrowth')
-                    d['rating'] = info.get('recommendationKey')
-                    d['target'] = info.get('targetMeanPrice')
-                    ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
-                    if ts:
-                        d['earnings_days'] = int((ts - _t.time()) // 86400)
-                    d['enriched'] = True
-                    break
-                except Exception:
-                    _t.sleep(pause * (2 ** attempt))   # backoff: 0.5, 1, 2, 4 s
+            d = self._fetch_info(s, retries, pause)
+            if d is None:
+                d = dict(is_crypto=False, name=None, sector=None, margin=None, revg=None,
+                         epsg=None, rating=None, target=None, earnings_days=None, enriched=False)
+            d['is_crypto'] = d['is_crypto'] or (s in self.KNOWN_CRYPTO_DIRECT)
             out[s] = d
             _t.sleep(pause)                            # pausa cortés entre símbolos
+
+        # Segunda pasada: reintentar los vacíos tras un descanso (el throttle es temporal).
+        failed = [s for s, d in out.items() if not d['enriched']]
+        if failed:
+            print(f"  {len(failed)} sin .info en la 1ª pasada; reintento tras {cooldown}s: {failed}")
+            _t.sleep(cooldown)
+            for s in failed:
+                d2 = self._fetch_info(s, retries, pause)
+                if d2 is not None:
+                    d2['is_crypto'] = d2['is_crypto'] or (s in self.KNOWN_CRYPTO_DIRECT)
+                    out[s] = d2
+                _t.sleep(pause)
+
+        # Fallback de nombre/sector al dato del NASDAQ (siempre, aunque .info responda
+        # parcialmente): el nombre del NASDAQ es fiable; su sector suele venir vacío.
+        for s, d in out.items():
+            meta = self.symbol_industries.get(s, {})
+            if not d.get('name'):
+                d['name'] = clean_company_name(meta.get('name'))
+            if not d.get('sector'):
+                sec = (meta.get('sector') or '').strip()
+                d['sector'] = sec if sec and sec.lower() != 'unknown' else None
+
         n_ok = sum(1 for v in out.values() if v['enriched'])
         print(f"  Enriquecidos {n_ok}/{len(out)} candidatos (yfinance .info)")
         return out
