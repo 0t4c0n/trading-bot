@@ -31,8 +31,8 @@ Antes de nada, el universo se recorta a nombres líquidos: **dólar-volumen medi
 Una acción entra si cumple **todo**:
 - **RS top 10%** (percentil ≥90 del retorno a 6 meses sobre el universo líquido)
 - **Tendencia alcista**: `precio > MA50 > MA200`, con ambas medias al alza
-- **Ruptura**: ha superado su **máximo previo de 52s** (calculado excluyendo las últimas ~25 sesiones = la resistencia que llevaba tiempo sin batirse)
-- **El nivel aguanta como soporte**: los mínimos recientes no han perdido el nivel roto más de ~1×ATR (tolera el barrido/overshoot normal del retest; el cierre sigue exigiéndose sobre el nivel)
+- **Ruptura de una BASE real** (no una tendencia continua): el precio ha **consolidado** en un rango tight (≤30% de amplitud) durante ~2 meses, cerca de sus máximos, y **acaba de superar el techo** de esa consolidación. Esto descarta las acciones que llevan meses subiendo sin parar (que trivialmente superan su máximo de hace semanas pero no rompen ninguna resistencia)
+- **El nivel aguanta como soporte**: los mínimos recientes no han perdido el techo roto más de ~1×ATR (tolera el barrido/overshoot normal del retest; el cierre sigue exigiéndose sobre el nivel)
 - **No extendida**: el precio está a **≤12% sobre la MA50**. En líderes volátiles el soporte fiable es la MA50, no el máximo roto; si el precio entra muy arriba, el stop al nivel roto queda dentro del hueco hasta la MA50 y un retroceso normal lo barre (casos SNEX/AMKR/LLY)
 - **Fresca**: el último mes (r1m) sigue subiendo → descarta rupturas viejas ya girándose
 - **Rentable**: se descartan empresas con margen neto ≤ 0

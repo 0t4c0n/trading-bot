@@ -52,6 +52,25 @@ DEFAULTS = dict(
     # ABAJO como soporte. Stop ≤ max_risk_pct (12%), lo que descarta las ya extendidas.
     breakout_rs_min=90,         # RS estricto (top ~10%) para la lista de rupturas
     prior_high_exclude=25,      # sesiones recientes excluidas del máximo 52s → "resistencia previa"
+    # --- BASE / consolidación (lo que distingue una RUPTURA de una tendencia continua) ---
+    # El "nivel roto" debe ser el techo de una CONSOLIDACIÓN tight reciente, no el máximo
+    # de hace 25 sesiones (una tendencia sostenida lo supera trivialmente — PLXS/IESC/ARCB
+    # jun-2026 venían subiendo meses sin base). Exigir base = O'Neil/Minervini: el precio
+    # se aplana bajo una resistencia varias semanas y luego la rompe.
+    breakout_base_window=40,    # nº de sesiones de la consolidación a evaluar (~2 meses)
+    breakout_lead=7,            # sesiones recientes (la ruptura) excluidas de la base
+    breakout_base_max_range=0.30,  # la base debe ser TIGHT: (máx−mín)/mín ≤ esto. Una
+                                # tendencia tiene rango ancho → se descarta. BACKTEST: con
+                                # base, CAGR mecánico baja (~9% vs ~14% de la lógica vieja de
+                                # "tendencia continua") porque en bull subirse a la tendencia
+                                # capta más recorrido; PERO mejora PF (2.88 vs 2.74) y drawdown
+                                # (−15% vs −20%) y da setups CON SENTIDO (ruptura de base, no
+                                # perseguir). 0.30 = mejor de las variantes de base (0.20/0.25
+                                # peor: bases muy tight fallan más). Elegido a propósito por el
+                                # usuario: detector MANUAL → prima sentido/entrada limpia sobre
+                                # CAGR mecánico (que no es su vara de medir). Ver memoria.
+    breakout_base_near_high=0.10,  # la base se formó CERCA de máximos (techo ≥ 90% del máx
+                                # 52s) → ruptura a terreno nuevo, no un techo interno menor.
     breakout_hold_window=5,     # las últimas N sesiones deben aguantar sobre el nivel roto
     retest_margin=0.04,         # si el mínimo reciente volvió a ≤4% del nivel roto → "retest OK"
     breakout_min_r1m=0.0,       # FRESCURA: el último mes (21 sesiones) debe seguir subiendo
@@ -189,10 +208,30 @@ def evaluate_breakout(c, h, l, i, rs_val, params=None):
     if max_ext is not None and px > ma50 * (1 + max_ext):
         return None
 
-    # Resistencia previa = máximo de 52s EXCLUYENDO las últimas sesiones (la ruptura).
-    ex = p['prior_high_exclude']
-    prior_high = h[i - 252:i - ex].max()
-    if not (px > prior_high):          # tiene que haber roto el techo
+    # RUPTURA DE UNA BASE/consolidación, no una tendencia continua. El "nivel roto" es el
+    # techo de una consolidación TIGHT reciente; una tendencia sostenida (sin base) se
+    # descarta aquí aunque supere su máximo de hace 25 sesiones (caso PLXS/IESC/ARCB).
+    bw, lead = p['breakout_base_window'], p['breakout_lead']
+    if i - bw - lead < 0:
+        return None
+    base = slice(i - bw - lead, i - lead)
+    base_hi = float(h[base].max())
+    base_lo = float(l[base].min())
+    if base_lo <= 0:
+        return None
+    # (1) la base es TIGHT (consolidó, no trendeó): rango high-low acotado
+    if (base_hi - base_lo) / base_lo > p['breakout_base_max_range']:
+        return None
+    hi52 = float(h[i - 252:i + 1].max())
+    # (2) la base se formó CERCA de máximos → ruptura a terreno nuevo, no un techo interno
+    if base_hi < hi52 * (1 - p['breakout_base_near_high']):
+        return None
+    # (3) ruptura RECIENTE: hace `lead` sesiones el cierre seguía dentro/bajo la base...
+    if c[i - lead] > base_hi:
+        return None
+    # ...y ahora supera el techo de la consolidación (= nivel roto).
+    prior_high = base_hi
+    if not (px > prior_high):
         return None
 
     at = _atr(h, l, c, i, p['atr_period'])
@@ -225,7 +264,6 @@ def evaluate_breakout(c, h, l, i, rs_val, params=None):
     if r1m <= p['breakout_min_r1m']:
         return None
 
-    hi52 = h[i - 252:i].max()
     retested = recent_low <= prior_high * (1 + p['retest_margin'])
     return dict(signal=True, entry=float(px), sl=round(float(sl), 4),
                 risk_pct=round(float(risk) * 100, 2),
