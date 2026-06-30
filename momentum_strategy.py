@@ -100,6 +100,10 @@ DEFAULTS = dict(
     watch_near_high=0.02,       # ese máximo reciente debe estar a ≤2% del máximo de 52s
     watch_pullback_min=0.03,    # ...y el precio ha retrocedido ≥3% desde ese máximo
     watch_ma50_buffer=0.0,      # ...pero sigue por encima de la MA50 (uptrend intacto)
+    watch_max_ext_ma50=0.12,    # ...Y ya está CERCA de la zona de testeo: px ≤ MA50·1.12
+                                # (mismo tope que la ruptura). Sin esto, un cohete a +50%
+                                # sobre la MA50 que baja un 8% del máximo colaba como "a
+                                # vigilar" sin estar en zona de testeo (SNDK/AGL/BAND, jun-2026).
 )
 
 
@@ -265,10 +269,13 @@ def evaluate_watch(c, h, l, i, rs_val, params=None):
     if hi_recent < hi52 * (1 - p['watch_near_high']):
         return None
     # Ha retrocedido desde ese máximo (≥ watch_pullback_min) PERO sigue sobre la MA50
-    # (uptrend intacto, aún no ha llegado al testeo de la media → no es pullback todavía).
+    # (uptrend intacto, aún no ha llegado al testeo de la media → no es pullback todavía)
+    # Y ya está CERCA de la zona de testeo (≤ watch_max_ext_ma50 sobre la MA50): si no, es
+    # un cohete extendido que solo ha bajado un poco, no algo en zona de decisión.
     pulled = px <= hi_recent * (1 - p['watch_pullback_min'])
     above_ma50 = px > ma50 * (1 + p['watch_ma50_buffer'])
-    if not (pulled and above_ma50):
+    near_zone = px <= ma50 * (1 + p['watch_max_ext_ma50'])
+    if not (pulled and above_ma50 and near_zone):
         return None
 
     at = _atr(h, l, c, i, p['atr_period'])

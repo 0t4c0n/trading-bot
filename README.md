@@ -62,7 +62,7 @@ Cada candidata se enriquece con datos de yfinance (sector, margen, crecimiento, 
 Como apoyo, los líderes (RS top 20%) en rebote sobre la MA50 en subida (entrada de bajo riesgo clásica).
 
 ### 7. Lista A VIGILAR — en testeo (radar, no accionable)
-El hueco entre la ruptura y el pullback: un líder (RS top 10%) que **hizo máximos recientes y ha retrocedido** desde ellos, pero **sigue por encima de la MA50** y aún no la ha testeado. No lleva stop/entrada: es para **vigilar las próximas sesiones** y ver si rebota (→ posible ruptura, momento de entrar) o cae hasta la MA50 (→ aparece en la lista de pullback). Evita perseguir la acción el día que se dispara.
+El hueco entre la ruptura y el pullback: un líder (RS top 10%) que **hizo máximos recientes y ha retrocedido** desde ellos, pero **sigue por encima de la MA50** y aún no la ha testeado, y **ya está cerca de la zona de testeo** (≤12% sobre la MA50, para que sea zona de decisión y no un cohete aún extendido). No lleva stop/entrada: es para **vigilar las próximas sesiones** y ver si rebota (→ posible ruptura, momento de entrar) o cae hasta la MA50 (→ aparece en la lista de pullback). Evita perseguir la acción el día que se dispara.
 
 ### 8. Salida — dejar correr (gestión manual)
 La gestionas tú con un trailing stop ancho (~32% bajo el máximo). Empezar poco y piramidar si la acción sigue subiendo.
