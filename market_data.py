@@ -229,10 +229,28 @@ class MarketData:
 
     # --- Salud del mercado ---
     def check_market_health(self, spy_df):
-        """¿Mercado alcista? (SPY sobre MA200). Devuelve (healthy: bool, score 0-15)."""
-        if spy_df is None or len(spy_df) < 200:
+        """¿Mercado alcista? (SPY sobre MA200). Devuelve (healthy: bool, score 0-15).
+
+        Robusto ante datos corruptos de yfinance: UNA sola vela basura del índice
+        (print erróneo / barra parcial / dato adyacente mal ajustado) NO debe voltear
+        el régimen y dejar el dashboard en 'bajista' con 0 candidatos. Pasó el
+        27/06/2026: el run leyó cur≈6200 vs MA200≈6900 (score 0.0, 'bajista') cuando
+        el ^GSPC estaba realmente ~+7% SOBRE su MA200. El filtro de régimen es lento
+        por diseño: ninguna sesión normal mueve el índice >15%, así que un salto así
+        es dato corrupto, no mercado."""
+        if spy_df is None:
             return True, 7.5
-        c = spy_df['Close'].astype(float)
+        c = spy_df['Close'].astype(float).dropna()
+        if len(c) < 200:
+            return True, 7.5
+        # Saneado: si el último cierre se desvía >15% de la mediana de los 5 cierres
+        # previos (imposible en el S&P en una sesión), se descarta esa vela y se usa
+        # el último cierre limpio para decidir el régimen.
+        ref = float(c.iloc[-6:-1].median())
+        if ref > 0 and abs(c.iloc[-1] / ref - 1) > 0.15:
+            c = c.iloc[:-1]
+            if len(c) < 200:
+                return True, 7.5
         ma200 = float(c.rolling(200).mean().iloc[-1])
         ma50 = float(c.rolling(50).mean().iloc[-1])
         cur = float(c.iloc[-1])

@@ -23,11 +23,12 @@ import numpy as np
 import pandas as pd
 
 from market_data import MarketData
-from momentum_strategy import evaluate_entry, evaluate_breakout, DEFAULTS
+from momentum_strategy import evaluate_entry, evaluate_breakout, evaluate_watch, DEFAULTS
 
 MOM_LOOKBACK = DEFAULTS['mom_lookback']   # 126 sesiones (6 meses)
 MAX_BREAKOUTS = 6   # tope de la lista primaria (rápido de revisar; el resto en el CSV)
 MAX_PULLBACKS = 3   # tope de la lista secundaria
+MAX_WATCH = 3       # tope de la lista 'a vigilar / en testeo' (mismo nº que pullback)
 
 
 def compute_rs_percentile(data, lookback=MOM_LOOKBACK):
@@ -69,6 +70,32 @@ def find_momentum_picks(data, rs_ratings, market_healthy):
     # una CESTA diversificada de los top y dejar correr, no en clavar el #1.
     picks.sort(key=lambda p: -p['mom6m'])
     return picks
+
+
+def find_watch(data, rs_ratings, market_healthy):
+    """Lista 'A VIGILAR / EN TESTEO' (radar): líderes que hicieron máximos recientes y han
+    RETROCEDIDO desde ellos pero siguen sobre la MA50 — el paso PREVIO a la entrada. No
+    son accionables (sin stop): se vigila si rebotan (→ posible ruptura) o caen al testeo
+    de la MA50 (→ pullback). Captura el hueco que ni ruptura ni pullback ven todavía."""
+    out = []
+    if not market_healthy:
+        return out
+    for s, df in data.items():
+        try:
+            c = df['Close'].values.astype(float)
+            h = df['High'].values.astype(float)
+            l = df['Low'].values.astype(float)
+        except Exception:
+            continue
+        i = len(c) - 1
+        sig = evaluate_watch(c, h, l, i, float(rs_ratings.get(s, 0)), DEFAULTS)
+        if sig is None:
+            continue
+        mom6m = (c[i] / c[i - MOM_LOOKBACK] - 1) * 100 if c[i - MOM_LOOKBACK] > 0 else 0.0
+        out.append(dict(symbol=s, rs=float(rs_ratings.get(s, 0)), mom6m=round(mom6m, 1), **sig))
+    # Ranking por fuerza relativa (el candidato de vigilancia de mayor calidad primero).
+    out.sort(key=lambda p: (-p['rs'], -p['mom6m']))
+    return out
 
 
 def _rsi(c, n=14):
@@ -113,23 +140,28 @@ def _clip01(x):
 
 def score_breakout(p):
     """Score 0-100 TRANSPARENTE para ordenar (no predice ganadores: ordena calidad de
-    setup + convicción + fundamental para el triaje manual). Pesos: RS 25, fundamental
-    20, volumen 15, momentum 10, retest 10, entrada/riesgo 10, frescura r1m 10."""
+    setup + convicción + fundamental para el triaje manual). Pesos: RS 35, fundamental
+    20, volumen 15, momentum 10, retest 10, frescura r1m 10.
+
+    NO premia el riesgo/SL pequeño: el backtest mostró que premiar bajo riesgo es
+    contraproducente (el tramo <4% de riesgo es el que peor rinde) — igual que ya hace la
+    lista de pullback. Además el cap de extensión sobre la MA50 ya acota la distancia al
+    soporte de forma estructural, así que no hay que ordenarlo también aquí. Esos 10 pts
+    fueron a RS (25→35), lo único que el backtest vio ordenar (débilmente) el retorno."""
     rs = _clip01((p['rs'] - 80) / 20)                       # RS 80→0, 100→1
     mom = _clip01(p['mom6m'] / 150)                          # momentum 6m, cap 150%
     vol = _clip01((p.get('vol_ratio', 1.0) - 0.8) / 0.6)    # vol10/50: 0.8→0, 1.4→1
     rete = 1.0 if p['retested'] else 0.0
-    entry = _clip01((DEFAULTS['max_risk_pct'] * 100 - p['risk_pct']) / (DEFAULTS['max_risk_pct'] * 100))
     fresh = _clip01(p.get('r1m', 0) / 10)                    # r1m ≥10% → 1
     margin, revg, epsg = p.get('margin'), p.get('revg'), p.get('epsg')
     f_prof = 1.0 if (margin is not None and margin > 0) else (0.5 if margin is None else 0.0)
     f_rev = _clip01((revg or 0) / 0.30) if revg is not None else 0.5
     f_eps = _clip01((epsg or 0) / 0.50) if epsg is not None else 0.5
     fund = f_prof * 0.5 + f_rev * 0.25 + f_eps * 0.25
-    return round(25 * rs + 10 * mom + 15 * vol + 10 * rete + 10 * entry + 10 * fresh + 20 * fund, 1)
+    return round(35 * rs + 10 * mom + 15 * vol + 10 * rete + 10 * fresh + 20 * fund, 1)
 
 
-def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_universe, n_leaders):
+def build_dashboard(breakouts, pullbacks, watch, market_healthy, market_score, n_universe, n_leaders):
     data = {
         "timestamp": datetime.now().isoformat(),
         "market_date": datetime.now().strftime("%Y-%m-%d"),
@@ -147,7 +179,8 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
             "leaders": n_leaders,
             "picks": len(breakouts),
             "message": (f"Top {min(len(breakouts), MAX_BREAKOUTS)} rupturas (de {len(breakouts)}) + "
-                        f"{min(len(pullbacks), MAX_PULLBACKS)} en pullback (de {len(pullbacks)}) | "
+                        f"{min(len(pullbacks), MAX_PULLBACKS)} en pullback (de {len(pullbacks)}) + "
+                        f"{min(len(watch), MAX_WATCH)} a vigilar (de {len(watch)}) | "
                         f"{n_leaders} líderes / {n_universe} líquidas | "
                         f"Mercado {'alcista ✅' if market_healthy else 'bajista ⚠️ — a liquidez'}"),
         },
@@ -157,15 +190,21 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
                           f"≥ ${DEFAULTS['min_dollar_vol']/1e6:.0f}M/día y precio "
                           f"≥ ${DEFAULTS['min_price']:.0f} (fuera microcaps/chicharros)"),
             "selection": (f"PRIMARIO: RS top 10% (≥{DEFAULTS['breakout_rs_min']}) + px>MA50>MA200 "
-                          f"(ambas subiendo) + RUPTURA del máximo previo (52s) que aguanta como soporte"),
+                          f"(ambas subiendo) + RUPTURA del máximo previo (52s) que aguanta como soporte, "
+                          f"y NO extendida: precio ≤{DEFAULTS['breakout_max_ext_ma50']*100:.0f}% sobre la MA50 "
+                          f"(en líderes volátiles el soporte real es la MA50, no el máximo roto)"),
             "exclusions": "Fuera cripto-directo (mineras / tesorerías bitcoin / exchanges) por volatilidad y riesgo regulatorio; se mantienen las de tecnología blockchain",
             "entry": "Comprar la fuerza confirmada; empezar poco y piramidar si sigue subiendo",
-            "stop": f"Justo bajo el nivel roto (ahora soporte) − 0.5×ATR(14), riesgo ≤ {DEFAULTS['max_risk_pct']*100:.0f}%",
+            "stop": f"Bajo el soporte real (mínimo del testeo/barrido o nivel roto, el más bajo) − 0.5×ATR(14), riesgo ≤ {DEFAULTS['max_risk_pct']*100:.0f}%",
             "exit": "Dejar correr: trailing stop ~32% bajo el máximo alcanzado (gestión manual)",
             "secondary": "SECUNDARIO: líderes (RS top 20%) en rebote sobre la MA50 (entrada de bajo riesgo)",
+            "watch": ("A VIGILAR / EN TESTEO: líder (RS top 10%) que hizo máximos recientes y ha "
+                      "retrocedido desde ellos pero sigue sobre la MA50. NO accionable (sin stop): "
+                      "vigilar si rebota (→ posible ruptura) o cae a la MA50 (→ pullback)"),
         },
         "breakouts": [],
         "pullbacks": [],
+        "watch": [],
     }
     for rank, p in enumerate(breakouts[:MAX_BREAKOUTS], 1):
         vr = p.get('vol_ratio', 1.0)
@@ -204,7 +243,7 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
             "note": ("Retest del nivel roto OK — soporte confirmado (entrada de bajo riesgo)"
                      if p['retested'] else
                      "Ruptura clara, aún sin retest — entrar a medias o esperar retest"),
-            "sl_explanation": "Stop justo bajo el máximo roto (ahora soporte) − 0.5×ATR",
+            "sl_explanation": "Stop bajo el soporte real: el mínimo del testeo/barrido (o el nivel roto si no hubo retest), − 0.5×ATR",
         })
     for rank, p in enumerate(pullbacks[:MAX_PULLBACKS], 1):
         data["pullbacks"].append({
@@ -221,6 +260,26 @@ def build_dashboard(breakouts, pullbacks, market_healthy, market_score, n_univer
             "risk_pct": p['risk_pct'],
             "note": "Rebote en la MA50 en subida (entrada de bajo riesgo)",
             "sl_explanation": "Mínimo del pullback − 0.5×ATR (rebote en MA50)",
+        })
+    for rank, p in enumerate(watch[:MAX_WATCH], 1):
+        data["watch"].append({
+            "rank": rank,
+            "symbol": p['symbol'],
+            "name": p.get('name') or p['symbol'],
+            "price": round(p['entry'], 2),
+            "rs_rating": round(p['rs'], 1),
+            "mom6m": p['mom6m'],
+            "recent_high": p['recent_high'],
+            "pct_from_recent_high": p['pct_from_recent_high'],
+            "pct_from_52w_high": p['pct_from_high'],
+            "ext_ma50_pct": p['ext_ma50_pct'],
+            "ma50": p['ma50'],
+            "ma200": p['ma200'],
+            "sector": p.get('sector') or "—",
+            "note": ("Retrocede desde máximos; aún sobre la MA50. Vigilar próximas sesiones: "
+                     "si REBOTA → posible entrada de ruptura; si cae a la MA50 → pullback de bajo riesgo"),
+            "watch_zone": ("Entrada ideal: rebote confirmado cerca de la zona de testeo o de la MA50 "
+                           f"(${p['ma50']:.0f}); NO perseguir el día que se dispara"),
         })
     return data
 
@@ -251,10 +310,12 @@ def run_momentum_screener():
     n_leaders = int((rs >= DEFAULTS['rs_min']).sum())
     breakouts = find_breakouts(data, rs, market_healthy)
     pullbacks = find_momentum_picks(data, rs, market_healthy)
+    watch = find_watch(data, rs, market_healthy)
 
     # Enriquecer SOLO los candidatos finales con yfinance (una llamada por símbolo):
     # cripto-directo, sector, margen, crecimiento, recomendación, objetivo y earnings.
-    cand = sorted({p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks})
+    cand = sorted({p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks}
+                  | {p['symbol'] for p in watch[:MAX_WATCH]})
     if cand:
         time.sleep(15)   # dejar respirar a Yahoo tras la descarga masiva antes de pedir .info
     enrich = md.enrich_candidates(cand) if cand else {}
@@ -273,13 +334,16 @@ def run_momentum_screener():
                     if not e.get('is_crypto') and e.get('margin') is not None and e['margin'] <= 0)
     breakouts = [p for p in breakouts if keep(p)]
     pullbacks = [p for p in pullbacks if keep(p)]
+    # El radar no repite un nombre que ya es accionable hoy (ruptura o pullback).
+    actionable = {p['symbol'] for p in breakouts} | {p['symbol'] for p in pullbacks}
+    watch = [p for p in watch if keep(p) and p['symbol'] not in actionable]
     if crypto:
         print(f"Excluidas cripto-directo: {crypto}")
     if unprof:
         print(f"Excluidas no rentables: {unprof}")
 
     # Adjuntar fundamentales + score y ORDENAR las rupturas por score (calidad de setup).
-    for p in breakouts + pullbacks:
+    for p in breakouts + pullbacks + watch:
         e = enrich.get(p['symbol'], {})
         p['name'] = e.get('name')
         p['sector'] = e.get('sector')
@@ -295,7 +359,7 @@ def run_momentum_screener():
 
     print(f"Líderes (RS≥{DEFAULTS['rs_min']}): {n_leaders} | "
           f"Rupturas confirmadas (RS≥{DEFAULTS['breakout_rs_min']}): {len(breakouts)} | "
-          f"Pullback MA50: {len(pullbacks)}")
+          f"Pullback MA50: {len(pullbacks)} | A vigilar (testeo): {len(watch)}")
 
     # Guardar CSV de rupturas (lista primaria)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -303,7 +367,7 @@ def run_momentum_screener():
         pd.DataFrame(breakouts).to_csv(f"momentum_breakouts_{ts}.csv", index=False)
 
     # Guardar dashboard
-    dash = build_dashboard(breakouts, pullbacks, market_healthy, market_score, len(data), n_leaders)
+    dash = build_dashboard(breakouts, pullbacks, watch, market_healthy, market_score, len(data), n_leaders)
     os.makedirs('docs', exist_ok=True)
     with open('docs/data.json', 'w', encoding='utf-8') as f:
         json.dump(dash, f, indent=2, ensure_ascii=False)
