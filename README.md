@@ -10,12 +10,12 @@ Pensado para **position trading**: detectar las pocas empresas excepcionales del
 
 ## 🎯 Filosofía
 
-> Comprar **fuerza confirmada**, no adivinar suelos. Una ruptura que ha superado su resistencia y la testea como soporte da una entrada con **stop natural ceñido** (bajo el nivel roto). Pocas candidatas, revisadas a mano, dejando correr a las ganadoras.
+> Comprar **fuerza confirmada**, no adivinar suelos. Una ruptura que ha superado su resistencia y la testea como soporte da una entrada con **stop natural** bajo el soporte real (el mínimo del testeo, o el nivel roto si no hubo retest). Pocas candidatas, revisadas a mano, dejando correr a las ganadoras.
 
 - **Temporalidad**: gráfico diario (1D)
 - **Universo**: NYSE + NASDAQ, solo acciones **líquidas** (sin microcaps/chicharros)
 - **Frecuencia**: ejecución automática diaria (solo en mercado alcista)
-- **Salida del screener**: **top 6 rupturas** + **top 3 pullback**, ordenadas por un score de calidad
+- **Salida del screener**: **top 6 rupturas** + **top 3 pullback** + **top 3 a vigilar**, ordenadas por un score de calidad
 
 ---
 
@@ -31,14 +31,15 @@ Antes de nada, el universo se recorta a nombres líquidos: **dólar-volumen medi
 Una acción entra si cumple **todo**:
 - **RS top 10%** (percentil ≥90 del retorno a 6 meses sobre el universo líquido)
 - **Tendencia alcista**: `precio > MA50 > MA200`, con ambas medias al alza
-- **Ruptura**: ha superado su **máximo previo de 52s** (calculado excluyendo las últimas ~25 sesiones = la resistencia que tenía que romper)
-- **El nivel aguanta como soporte**: los mínimos recientes no han vuelto a perder el nivel roto (acepta tanto las ya retesteadas como las que solo lo superaron con claridad)
+- **Ruptura**: ha superado su **máximo previo de 52s** (calculado excluyendo las últimas ~25 sesiones = la resistencia que llevaba tiempo sin batirse)
+- **El nivel aguanta como soporte**: los mínimos recientes no han perdido el nivel roto más de ~1×ATR (tolera el barrido/overshoot normal del retest; el cierre sigue exigiéndose sobre el nivel)
+- **No extendida**: el precio está a **≤12% sobre la MA50**. En líderes volátiles el soporte fiable es la MA50, no el máximo roto; si el precio entra muy arriba, el stop al nivel roto queda dentro del hueco hasta la MA50 y un retroceso normal lo barre (casos SNEX/AMKR/LLY)
 - **Fresca**: el último mes (r1m) sigue subiendo → descarta rupturas viejas ya girándose
 - **Rentable**: se descartan empresas con margen neto ≤ 0
 - **No cripto-directo**: fuera mineras de bitcoin, tesorerías cripto y exchanges (volátiles y con riesgo regulatorio); se mantienen las de tecnología blockchain
 
 ### 4. Stop y riesgo
-- **Stop Loss** = nivel roto (ahora soporte) − 0.5×ATR(14)
+- **Stop Loss** = soporte real − 0.5×ATR(14), donde el soporte real es **el más bajo entre el mínimo del testeo/barrido y el nivel roto**. Si hubo barrido, el stop va bajo el mínimo del barrido (no bajo la resistencia, que se suele perforar un poco); si no hubo retest, va bajo el nivel roto
 - Se descartan entradas con **riesgo > 12%** (esto mismo elimina las rupturas ya extendidas)
 
 ### 5. Ranking — score de calidad 0-100
@@ -46,20 +47,24 @@ Las rupturas se ordenan por un score **transparente** (no predice ganadores; ord
 
 | Componente | Peso |
 |---|---|
-| Fuerza relativa (RS) | 25 |
+| Fuerza relativa (RS) | 35 |
 | Fundamental (rentable + crecimiento ventas/EPS) | 20 |
 | Volumen en la ruptura (vol 10/50) | 15 |
 | Momentum 6m | 10 |
 | Retest confirmado | 10 |
-| Entrada de bajo riesgo | 10 |
 | Frescura (r1m) | 10 |
+
+> El score **no premia el SL pequeño**: el backtest mostró que premiar bajo riesgo es contraproducente (el tramo <4% de riesgo es el que peor rinde), y el cap de extensión ya acota la distancia al soporte. Esos puntos van a la RS, lo único que el backtest vio ordenar (débilmente) el retorno futuro.
 
 Cada candidata se enriquece con datos de yfinance (sector, margen, crecimiento, recomendación de analistas, precio objetivo y **aviso de earnings ≤7 días**).
 
 ### 6. Lista SECUNDARIA — pullback a MA50
 Como apoyo, los líderes (RS top 20%) en rebote sobre la MA50 en subida (entrada de bajo riesgo clásica).
 
-### 7. Salida — dejar correr (gestión manual)
+### 7. Lista A VIGILAR — en testeo (radar, no accionable)
+El hueco entre la ruptura y el pullback: un líder (RS top 10%) que **hizo máximos recientes y ha retrocedido** desde ellos, pero **sigue por encima de la MA50** y aún no la ha testeado. No lleva stop/entrada: es para **vigilar las próximas sesiones** y ver si rebota (→ posible ruptura, momento de entrar) o cae hasta la MA50 (→ aparece en la lista de pullback). Evita perseguir la acción el día que se dispara.
+
+### 8. Salida — dejar correr (gestión manual)
 La gestionas tú con un trailing stop ancho (~32% bajo el máximo). Empezar poco y piramidar si la acción sigue subiendo.
 
 ---
@@ -81,7 +86,7 @@ Lo único robusto del backtest: (1) el **filtro de liquidez** era imprescindible
 | Archivo | Función |
 |---|---|
 | `momentum_screener.py` | **Screener diario** (universo → liquidez → RS → rupturas + pullback → score → `docs/data.json`) |
-| `momentum_strategy.py` | Lógica de detección: `evaluate_breakout` (ruptura), `evaluate_entry` (pullback), `DEFAULTS` |
+| `momentum_strategy.py` | Lógica de detección: `evaluate_breakout` (ruptura), `evaluate_entry` (pullback), `evaluate_watch` (a vigilar), `DEFAULTS` |
 | `market_data.py` | Datos: universo, descarga, salud de mercado, liquidez, enriquecimiento yfinance (cripto/fundamentales) |
 | `portfolio_backtest.py` | Motor de backtest de cartera reutilizable (CAGR, drawdown, Sharpe, vs SPY) |
 | `run_portfolio_demo.py` | Pipeline de backtest (universo amplio por capitalización → señales → cartera → informe) |
@@ -94,7 +99,7 @@ Lo único robusto del backtest: (1) el **filtro de liquidez** era imprescindible
 
 ```bash
 pip install -r requirements.txt
-python momentum_screener.py        # genera docs/data.json (top 6 rupturas + top 3 pullback)
+python momentum_screener.py        # genera docs/data.json (top 6 rupturas + top 3 pullback + top 3 a vigilar)
 open docs/index.html               # dashboard local
 
 # Backtest (validación honesta sobre universo amplio)
@@ -129,7 +134,8 @@ Probar otra estrategia: el motor de cartera está **desacoplado** — genera se�
       "earnings_flag": "⚠️ resultados en 3 días"
     }
   ],
-  "pullbacks": [ { "rank": 1, "symbol": "ABC", "rs_rating": 92, "...": "..." } ]
+  "pullbacks": [ { "rank": 1, "symbol": "ABC", "rs_rating": 92, "...": "..." } ],
+  "watch": [ { "rank": 1, "symbol": "LLY", "rs_rating": 97, "recent_high": 1183, "pct_from_recent_high": -6.4, "ext_ma50_pct": 9, "ma50": 1010, "...": "..." } ]
 }
 ```
 
